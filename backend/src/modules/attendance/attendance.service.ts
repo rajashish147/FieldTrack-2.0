@@ -1,5 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { attendanceRepository } from "./attendance.repository.js";
+import { sessionSummaryService } from "../session_summary/session_summary.service.js";
 import { BadRequestError } from "../../utils/errors.js";
 import type { AttendanceSession } from "./attendance.schema.js";
 
@@ -27,8 +28,9 @@ export const attendanceService = {
 
     /**
      * Check out — closes the open session if one exists.
+     * Automatically calculates and saves the final distance and duration summary.
      */
-    async checkOut(request: FastifyRequest): Promise<AttendanceSession> {
+    async checkOut(request: FastifyRequest): Promise<any> {
         const userId = request.user.sub;
 
         const openSession = await attendanceRepository.findOpenSession(request, userId);
@@ -39,8 +41,17 @@ export const attendanceService = {
         }
 
         request.log.info({ userId, organizationId: request.organizationId }, "Employee checked out");
-        return attendanceRepository.closeSession(request, openSession.id);
+        const closedSession = await attendanceRepository.closeSession(request, openSession.id);
+
+        // Phase 6: Sync distance computation engine automatically on checkout
+        const summary = await sessionSummaryService.calculateAndSave(request, closedSession.id);
+
+        return {
+            ...closedSession,
+            summary,
+        };
     },
+
 
     /**
      * Get the current user's own sessions.

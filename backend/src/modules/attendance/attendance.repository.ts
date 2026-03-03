@@ -165,4 +165,29 @@ export const attendanceRepository = {
         }
         return (data ?? []) as AttendanceSession[];
     },
+
+    /**
+     * Fetch a session exactly by ID for recalculation tasks.
+     * Still respects tenant isolation implicitly via enforceTenant.
+     */
+    async getSessionById(
+        request: FastifyRequest,
+        sessionId: string,
+    ): Promise<AttendanceSession | null> {
+        const baseQuery = supabase
+            .from("attendance_sessions")
+            .select("*")
+            .eq("id", sessionId);
+
+        const { data, error } = await enforceTenant(request, baseQuery)
+            .single();
+
+        if (error && error.code === "PGRST116") {
+            return null;
+        }
+        if (error) {
+            throw new Error(`Failed to fetch session: ${error.message}`);
+        }
+        return data as AttendanceSession;
+    },
 };

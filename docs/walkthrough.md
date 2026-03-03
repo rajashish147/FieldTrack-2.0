@@ -267,5 +267,34 @@ CREATE INDEX idx_locations_tenant_search ON locations(organization_id, user_id, 
 
 **Strategy for Scale:**
 1. **Partition by Range (Time)**: Transition the `locations` table to a PostgreSQL partitioned table grouping by `recorded_at` (e.g., month-by-month partitions).
-2. **Data Retention**: Drop older partitions cleanly as data ages out (e.g., after 90 days), rather than executing expensive bulk `DELETE` operations.
-3. **Partition by List (Tenant)**: If a specific tenant outgrows the shared architecture significantly, sub-partitioning by `organization_id` can route bulk data cleanly into dedicated tablespaces.
+---
+
+## Phase 6 — Distance Engine & Session Summary
+
+### Architecture Overview
+Introduced a computational engine designed to passively or actively calculate Haversine distances based on an employee's location pings throughout their `attendance_session`. The summaries are stored in a new `session_summaries` table.
+
+### Schema: `session_summaries`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `session_id` | uuid (PK) | Links directly to `attendance_sessions` |
+| `organization_id`| uuid | Tenant Isolation Key |
+| `user_id` | uuid | Employee ID |
+| `total_distance_meters`| double precision (float) | Cumulative calculated distance |
+| `total_points` | integer | Total GPS ticks ingested |
+| `duration_seconds` | integer | `check_out - check_in` |
+| `updated_at` | timestamptz | Last recalculated timestamp |
+
+### Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/attendance/check-out` | JWT | Existing endpoint; now **automatically** triggers the Distance Engine. |
+| POST | `/attendance/:sessionId/recalculate` | JWT | Explicitly recalculates distance if delayed offline points are synced. |
+
+### Performance Considerations & Idempotency
+
+- **Zero N+1 Queries**: The engine performs a single `select("latitude, longitude, recorded_at")` spanning the `session_id`, fetching lightning-fast lightweight payload objects strictly ordered by time without pulling heavy generic string representations.
+- **Hardware-Friendly Math**: Distance is parsed cumulatively using the native Haversine formula calculation over sequential point pairs (`p[i]` against `p[i+1]`).
+- **Idempotency via Upsert**: Because calculating distances mathematically resets the `session_summaries` dataset on conflict, calling the explicitly exposed `recalculate` recalculates the absolute ground truth replacing legacy distance calculations completely.

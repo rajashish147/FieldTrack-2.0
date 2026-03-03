@@ -95,4 +95,25 @@ export const locationsRepository = {
         }
         return (data ?? []) as LocationRecord[];
     },
+
+    /**
+     * Fetch lightweight points for distance calculation to avoid pulling full rows
+     */
+    async findPointsForDistance(
+        request: FastifyRequest,
+        sessionId: string,
+    ): Promise<{ latitude: number; longitude: number; recorded_at: string }[]> {
+        const baseQuery = supabase
+            .from("locations")
+            .select("latitude, longitude, recorded_at")
+            .eq("session_id", sessionId)
+            .order("recorded_at", { ascending: true });
+
+        const { data, error } = await enforceTenant(request, baseQuery);
+
+        if (error) {
+            throw new Error(`Failed to fetch points for distance: ${error.message}`);
+        }
+        return data ?? [];
+    },
 };
