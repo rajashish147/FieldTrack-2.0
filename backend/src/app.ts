@@ -5,6 +5,7 @@ import { getLoggerConfig } from "./config/logger.js";
 import { registerJwt } from "./plugins/jwt.js";
 import { registerRoutes } from "./routes/index.js";
 import fastifyRateLimit from "@fastify/rate-limit";
+import { startDistanceWorker } from "./workers/queue.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
     const app = Fastify({
@@ -19,6 +20,10 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     // Register routes
     await registerRoutes(app);
+
+    // Bootstrap Phase 7 Background Workers
+    // We explicitly do NOT await this because it's a perpetual infinite loop
+    startDistanceWorker(app);
 
     return app;
 }

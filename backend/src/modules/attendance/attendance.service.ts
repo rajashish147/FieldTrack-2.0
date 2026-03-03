@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { attendanceRepository } from "./attendance.repository.js";
-import { sessionSummaryService } from "../session_summary/session_summary.service.js";
+import { enqueueDistanceRecalculation } from "../../workers/queue.js";
 import { BadRequestError } from "../../utils/errors.js";
 import type { AttendanceSession } from "./attendance.schema.js";
 
@@ -28,9 +28,9 @@ export const attendanceService = {
 
     /**
      * Check out — closes the open session if one exists.
-     * Automatically calculates and saves the final distance and duration summary.
+     * Enqueues the closed session into a background worker for distance calculation.
      */
-    async checkOut(request: FastifyRequest): Promise<any> {
+    async checkOut(request: FastifyRequest): Promise<AttendanceSession> {
         const userId = request.user.sub;
 
         const openSession = await attendanceRepository.findOpenSession(request, userId);
@@ -43,13 +43,10 @@ export const attendanceService = {
         request.log.info({ userId, organizationId: request.organizationId }, "Employee checked out");
         const closedSession = await attendanceRepository.closeSession(request, openSession.id);
 
-        // Phase 6: Sync distance computation engine automatically on checkout
-        const summary = await sessionSummaryService.calculateAndSave(request, closedSession.id);
+        // Phase 7: Enqueue distance computation asynchronously so check-out is instantaneous
+        enqueueDistanceRecalculation(closedSession.id);
 
-        return {
-            ...closedSession,
-            summary,
-        };
+        return closedSession;
     },
 
 

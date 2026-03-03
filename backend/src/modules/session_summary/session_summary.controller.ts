@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { sessionSummaryService } from "./session_summary.service.js";
+import { processingTracker } from "../../workers/queue.js";
 import { AppError } from "../../utils/errors.js";
 
 /**
@@ -12,6 +13,16 @@ export const sessionSummaryController = {
     ): Promise<void> {
         try {
             const { sessionId } = request.params;
+
+            // Phase 7: Guard against triggering recalculation if the background worker is 
+            // already proactively crunching this exact session in the background
+            if (processingTracker.has(sessionId)) {
+                reply.status(409).send({
+                    error: "Session is currently being recalculated in the background. Check back in a few seconds."
+                });
+                return;
+            }
+
             const summary = await sessionSummaryService.calculateAndSave(request, sessionId);
             reply.status(200).send({ success: true, data: summary });
         } catch (error) {

@@ -97,22 +97,28 @@ export const locationsRepository = {
     },
 
     /**
-     * Fetch lightweight points for distance calculation to avoid pulling full rows
+     * Fetch lightweight points for distance calculation in paginated chunks
+     * to avoid memory exhaustion on long sessions.
      */
-    async findPointsForDistance(
+    async findPointsForDistancePaginated(
         request: FastifyRequest,
         sessionId: string,
+        page: number,
+        limit: number,
     ): Promise<{ latitude: number; longitude: number; recorded_at: string }[]> {
+        const offset = (page - 1) * limit;
+
         const baseQuery = supabase
             .from("locations")
             .select("latitude, longitude, recorded_at")
             .eq("session_id", sessionId)
             .order("recorded_at", { ascending: true });
 
-        const { data, error } = await enforceTenant(request, baseQuery);
+        const { data, error } = await enforceTenant(request, baseQuery)
+            .range(offset, offset + limit - 1);
 
         if (error) {
-            throw new Error(`Failed to fetch points for distance: ${error.message}`);
+            throw new Error(`Failed to fetch paginated points for distance: ${error.message}`);
         }
         return data ?? [];
     },
