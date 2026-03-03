@@ -123,3 +123,63 @@ curl "http://localhost:3000/attendance/org-sessions?page=1&limit=20" \
 | `npm run build` (tsc) | ✅ Zero errors |
 | `npm run dev` (tsx watch) | ✅ Server starts on `0.0.0.0:3000` |
 | `GET /health` | ✅ `{"status":"ok","timestamp":"..."}` |
+
+---
+
+## Phase 3 — Location Ingestion System
+
+### Files Created
+
+| File | Layer | Purpose |
+|------|-------|---------|
+| [locations.schema.ts](file:///d:/Codebase/FieldTrack-2.0/backend/src/modules/locations/locations.schema.ts) | Types | DB row type, Zod schema (`latitude`, `longitude`, `accuracy`, `recorded_at`), response interfaces |
+| [locations.repository.ts](file:///d:/Codebase/FieldTrack-2.0/backend/src/modules/locations/locations.repository.ts) | Repository | Supabase `createLocation` and `findLocationsBySession`, scoped via `enforceTenant()` |
+| [locations.service.ts](file:///d:/Codebase/FieldTrack-2.0/backend/src/modules/locations/locations.service.ts) | Service | Business rules: verify open attendance session before insertion |
+| [locations.controller.ts](file:///d:/Codebase/FieldTrack-2.0/backend/src/modules/locations/locations.controller.ts) | Controller | Extract request data, Zod payload validation, delegate to service, format responses |
+| [locations.routes.ts](file:///d:/Codebase/FieldTrack-2.0/backend/src/modules/locations/locations.routes.ts) | Routes | 2 endpoints, both restricted to `EMPLOYEE` via role guard |
+
+### Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/locations` | JWT + EMPLOYEE | Record GPS point (body: lat, lng, acc, recorded_at) |
+| GET | `/locations/my-route?sessionId=...` | JWT + EMPLOYEE | Get ordered location history for an active/past session |
+
+### Business Rules
+
+- **Attendance Dependency**: An employee *must* have an open attendance session (checked via `attendanceRepository.findOpenSession`) to record a location. 
+- **Time Validation**: `recorded_at` cannot be more than 2 minutes in the future (enforced via Zod refinement).
+- **Coordinate Bounds**: Latitude between `-90` and `90`, Longitude between `-180` and `180`.
+- **Role Guarding**: Location ingestion is strictly limited to `EMPLOYEE` role. `ADMIN` cannot POST locations on behalf of an employee.
+
+### Suggested Database Indexes (Phase 3 Prep)
+
+Since `findLocationsBySession` orders by `recorded_at`, and queries are scoped to `session_id`, the `locations` table requires the following index in PostgreSQL to remain performant at scale:
+
+```sql
+CREATE INDEX idx_locations_session_recorded_at ON locations(session_id, recorded_at ASC);
+```
+
+If tenant-scoped analytics are added in the future over raw locations, a broader compound index will be needed:
+```sql
+CREATE INDEX idx_locations_tenant_search ON locations(organization_id, user_id, recorded_at DESC);
+```
+
+### Example curl Requests
+
+```bash
+# Record location (requires open attendance session)
+curl -X POST http://localhost:3000/locations \
+  -H "Authorization: Bearer <EMPLOYEE_JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "latitude": 37.7749,
+    "longitude": -122.4194,
+    "accuracy": 15.5,
+    "recorded_at": "2026-03-03T10:00:00Z"
+  }'
+
+# Get location route for an existing session
+curl "http://localhost:3000/locations/my-route?sessionId=a1b2c3d4-..." \
+  -H "Authorization: Bearer <EMPLOYEE_JWT>"
+```
