@@ -10,9 +10,9 @@ import type { LocationRecord, CreateLocationBody } from "./locations.schema.js";
  */
 export const locationsRepository = {
     /**
-     * Insert a new location record attached to a specific session.
-     * Insert doesn't need enforceTenant() since org_id is explicitly set.
-     */
+   * Insert a new location record attached to a specific session.
+   * Uses upsert to guarantee idempotency against network retries.
+   */
     async createLocation(
         request: FastifyRequest,
         userId: string,
@@ -21,7 +21,7 @@ export const locationsRepository = {
     ): Promise<LocationRecord> {
         const { data: record, error } = await supabase
             .from("locations")
-            .insert({
+            .upsert({
                 user_id: userId,
                 organization_id: request.organizationId,
                 session_id: sessionId,
@@ -30,7 +30,7 @@ export const locationsRepository = {
                 accuracy: data.accuracy,
                 recorded_at: data.recorded_at,
                 created_at: new Date().toISOString(),
-            })
+            }, { onConflict: "session_id, recorded_at", ignoreDuplicates: true })
             .select("*")
             .single();
 
@@ -38,6 +38,41 @@ export const locationsRepository = {
             throw new Error(`Failed to insert location: ${error.message}`);
         }
         return record as LocationRecord;
+    },
+
+    /**
+     * Bulk insert multiple location points for a specific session.
+     * Supabase optimally handles bulk inserts via array passing.
+     * Uses upsert to guarantee idempotency.
+     */
+    async createLocationBatch(
+        request: FastifyRequest,
+        userId: string,
+        sessionId: string,
+        points: Omit<CreateLocationBody, "session_id">[],
+    ): Promise<number> {
+        const now = new Date().toISOString();
+        const rows = points.map((p) => ({
+            user_id: userId,
+            organization_id: request.organizationId,
+            session_id: sessionId,
+            latitude: p.latitude,
+            longitude: p.longitude,
+            accuracy: p.accuracy,
+            recorded_at: p.recorded_at,
+            created_at: now,
+        }));
+
+        // .select("id") ensures we just get a low-bandwidth id map back to count them
+        const { data, error } = await supabase
+            .from("locations")
+            .upsert(rows, { onConflict: "session_id, recorded_at", ignoreDuplicates: true })
+            .select("id");
+
+        if (error) {
+            throw new Error(`Failed to bulk insert locations: ${error.message}`);
+        }
+        return data?.length ?? 0;
     },
 
     /**

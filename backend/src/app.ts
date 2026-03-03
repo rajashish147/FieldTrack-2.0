@@ -4,6 +4,7 @@ import { env } from "./config/env.js";
 import { getLoggerConfig } from "./config/logger.js";
 import { registerJwt } from "./plugins/jwt.js";
 import { registerRoutes } from "./routes/index.js";
+import fastifyRateLimit from "@fastify/rate-limit";
 
 export async function buildApp(): Promise<FastifyInstance> {
     const app = Fastify({
@@ -11,6 +12,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     });
 
     // Register plugins
+    await app.register(fastifyRateLimit, {
+        global: false, // We will apply it specifically where needed
+    });
     await registerJwt(app);
 
     // Register routes

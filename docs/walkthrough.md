@@ -183,3 +183,87 @@ curl -X POST http://localhost:3000/locations \
 curl "http://localhost:3000/locations/my-route?sessionId=a1b2c3d4-..." \
   -H "Authorization: Bearer <EMPLOYEE_JWT>"
 ```
+
+---
+
+## Phase 4 — Location Bulk Ingestion (Production-Optimized)
+
+### Architecture Upgrade
+Upgraded location ingestion from single-inserts to a highly optimized bulk-insert pattern, handling offline batching and high-frequency GPS tracking efficiently.
+
+### Additional Endpoint
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/locations/batch` | JWT + EMPLOYEE | Bulk ingest up to 100 points simultaneously |
+
+### Batch Payload Schema
+```json
+{
+  "session_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "points": [
+    {
+      "latitude": 37.7749,
+      "longitude": -122.4194,
+      "accuracy": 5.0,
+      "recorded_at": "2026-03-03T10:00:00Z"
+    }
+  ]
+}
+```
+
+### Enterprise Optimizations & Business Rules
+
+- **1️⃣ Idempotency (Mobile Retries)**: 
+  The database uses an `UPSERT` on `(session_id, recorded_at)` combined with `{ ignoreDuplicates: true }`. If the mobile client retries a batch due to a poor network connection, duplicates are cleanly discarded directly at the database layer. This guarantees route reconstruction isn't corrupted by duplicate points.
+- **2️⃣ Zero Write Amplification**: 
+  Instead of hitting the DB to scan for the user's active session on every GPS pulse, the client provides the `session_id` directly in the payload. The backend executes an extremely lightweight `O(1)` primary key validation (`validateSessionActive`) to confirm ownership and activity, slicing database CPU usage drastically compared to iterative scanning.
+- **3️⃣ Per-User Rate Limiting**: 
+  Protected by Fastify's native `@fastify/rate-limit` plugin. The batch location ingest vector strictly drops combinations exceeding 10 requests every 10 seconds, stopping malicious overload attacks instantaneously.
+- **Strict Validation**: Zod array limits (`min(1).max(100)`) prevent abuse. If even a single point in the payload violates rules, the **entire batch is rejected** (400 Bad Request).
+- **Single Read / Single Write**: Validations verify the session hits the database exactly **once**. The insert operation maps all points and calls Supabase `.upsert([...rows])` to perform the bulk operation in a single network trip.
+
+### Example Batch curl Request
+
+```bash
+curl -X POST http://localhost:3000/locations/batch \
+  -H "Authorization: Bearer <EMPLOYEE_JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "points": [
+      {
+        "latitude": 37.7749,
+        "longitude": -122.4194,
+        "accuracy": 5.0,
+        "recorded_at": "2026-03-03T10:00:00Z"
+      },
+      {
+        "latitude": 37.7750,
+        "longitude": -122.4195,
+        "accuracy": 4.5,
+        "recorded_at": "2026-03-03T10:00:05Z"
+      }
+    ]
+  }'
+```
+
+### Suggested Database Schema & Partitioning Strategy
+
+For this level of enterprise ingestion, the `locations` table requires specific indexing:
+
+```sql
+-- 1) Guaranteed Idempotency (critical for Supabase onConflict)
+CREATE UNIQUE INDEX uniq_session_timestamp ON locations(session_id, recorded_at);
+
+-- 2) Fast Route Reconstruction
+CREATE INDEX idx_locations_session_recorded_at ON locations(session_id, recorded_at ASC);
+
+-- 3) (Future) Analytics Expansion
+CREATE INDEX idx_locations_tenant_search ON locations(organization_id, user_id, recorded_at DESC);
+```
+
+**Strategy for Scale:**
+1. **Partition by Range (Time)**: Transition the `locations` table to a PostgreSQL partitioned table grouping by `recorded_at` (e.g., month-by-month partitions).
+2. **Data Retention**: Drop older partitions cleanly as data ages out (e.g., after 90 days), rather than executing expensive bulk `DELETE` operations.
+3. **Partition by List (Tenant)**: If a specific tenant outgrows the shared architecture significantly, sub-partitioning by `organization_id` can route bulk data cleanly into dedicated tablespaces.

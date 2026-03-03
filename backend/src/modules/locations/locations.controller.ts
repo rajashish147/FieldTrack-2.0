@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { locationsService } from "./locations.service.js";
-import { createLocationSchema, sessionQuerySchema } from "./locations.schema.js";
+import { createLocationSchema, createLocationBatchSchema, sessionQuerySchema } from "./locations.schema.js";
 import { AppError } from "../../utils/errors.js";
 
 /**
@@ -17,12 +17,30 @@ export const locationsController = {
                 reply.status(error.statusCode).send({ error: error.message });
                 return;
             }
-            // Zod validation errors
             if (error instanceof Error && error.name === "ZodError") {
                 reply.status(400).send({ error: JSON.parse(error.message) });
                 return;
             }
             request.log.error(error, "Unexpected error ingesting location");
+            reply.status(500).send({ error: "Internal server error" });
+        }
+    },
+
+    async recordLocationBatch(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+        try {
+            const parsedBody = createLocationBatchSchema.parse(request.body);
+            const inserted = await locationsService.recordLocationBatch(request, parsedBody);
+            reply.status(201).send({ success: true, inserted });
+        } catch (error) {
+            if (error instanceof AppError) {
+                reply.status(error.statusCode).send({ error: error.message });
+                return;
+            }
+            if (error instanceof Error && error.name === "ZodError") {
+                reply.status(400).send({ error: JSON.parse(error.message) });
+                return;
+            }
+            request.log.error(error, "Unexpected error ingesting location batch");
             reply.status(500).send({ error: "Internal server error" });
         }
     },

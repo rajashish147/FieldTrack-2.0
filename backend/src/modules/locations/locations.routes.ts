@@ -12,6 +12,17 @@ export async function locationsRoutes(app: FastifyInstance): Promise<void> {
         preHandler: [authenticate, requireRole("EMPLOYEE")],
     }, locationsController.recordLocation);
 
+    // Bulk ingest locations — EMPLOYEE only
+    app.post("/locations/batch", {
+        config: {
+            rateLimit: {
+                max: 10,
+                timeWindow: 10000, // 10 requests per 10 seconds
+            }
+        },
+        preHandler: [authenticate, requireRole("EMPLOYEE")],
+    }, locationsController.recordLocationBatch);
+
     // Retrieve route — specific session history (EMPLOYEE)
     app.get("/locations/my-route", {
         preHandler: [authenticate, requireRole("EMPLOYEE")],

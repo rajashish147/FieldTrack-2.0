@@ -20,6 +20,7 @@ export interface LocationRecord {
 const TWO_MINUTES_MS = 2 * 60 * 1000;
 
 export const createLocationSchema = z.object({
+    session_id: z.string().uuid("session_id must be a valid UUID"),
     latitude: z.number().min(-90).max(90),
     longitude: z.number().min(-180).max(180),
     accuracy: z.number().min(0),
@@ -32,6 +33,13 @@ export const createLocationSchema = z.object({
 });
 
 export type CreateLocationBody = z.infer<typeof createLocationSchema>;
+
+export const createLocationBatchSchema = z.object({
+    session_id: z.string().uuid("session_id must be a valid UUID"),
+    points: z.array(createLocationSchema.omit({ session_id: true })).min(1).max(100),
+});
+
+export type CreateLocationBatchBody = z.infer<typeof createLocationBatchSchema>;
 
 export const sessionQuerySchema = z.object({
     sessionId: z.string().uuid("sessionId must be a valid UUID"),
@@ -49,4 +57,9 @@ export interface LocationResponse {
 export interface LocationListResponse {
     success: true;
     data: LocationRecord[];
+}
+
+export interface LocationBatchResponse {
+    success: true;
+    inserted: number;
 }

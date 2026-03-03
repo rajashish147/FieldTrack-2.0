@@ -37,6 +37,34 @@ export const attendanceRepository = {
     },
 
     /**
+     * Exact lookup to validate that a specific session belongs to the user and is still active.
+     */
+    async validateSessionActive(
+        request: FastifyRequest,
+        sessionId: string,
+        userId: string,
+    ): Promise<boolean> {
+        const baseQuery = supabase
+            .from("attendance_sessions")
+            .select("id")
+            .eq("id", sessionId)
+            .eq("user_id", userId)
+            .is("check_out_at", null);
+
+        const { data, error } = await enforceTenant(request, baseQuery)
+            .limit(1)
+            .single();
+
+        if (error && error.code === "PGRST116") {
+            return false;
+        }
+        if (error) {
+            throw new Error(`Failed to validate session: ${error.message}`);
+        }
+        return !!data;
+    },
+
+    /**
      * Create a new check-in session.
      * Insert doesn't need enforceTenant() — we explicitly set organization_id.
      */
