@@ -1,0 +1,53 @@
+name: FieldTrack Backend Deploy
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract commit SHA
+        run: echo "SHA_SHORT=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker images
+        run: |
+          docker build \
+            -t ghcr.io/rajashish147/fieldtrack-backend:${{ env.SHA_SHORT }} \
+            -t ghcr.io/rajashish147/fieldtrack-backend:latest \
+            ./backend
+
+      - name: Push Docker images
+        run: |
+          docker push ghcr.io/rajashish147/fieldtrack-backend:${{ env.SHA_SHORT }}
+          docker push ghcr.io/rajashish147/fieldtrack-backend:latest
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            cd /home/ashish/FieldTrack-2.0/backend
+            git pull
+            chmod +x scripts/deploy-bluegreen.sh
+            ./scripts/deploy-bluegreen.sh
