@@ -1239,7 +1239,12 @@ When `GITHUB_SHA` is absent (local dev, manual deploy), the value is `"manual"`.
 
 ### Overview
 
-Phase 12 adds a standard Prometheus scrape endpoint to FieldTrack 2.0. This is a pure observability addition — no business logic, no auth, no changes to existing routes. The existing `/internal/metrics` JSON endpoint is untouched.
+Phase 12 adds a Prometheus scrape endpoint and full HTTP request instrumentation to FieldTrack 2.0. This is a pure observability addition — no business logic, no auth, no changes to existing routes. The existing `/internal/metrics` JSON endpoint is untouched.
+
+Two categories of metrics are collected:
+
+- **Default Node.js metrics** — CPU, heap, event-loop lag, GC, libuv handles (zero application code needed)
+- **HTTP request metrics** — per-route request counts and latency histograms labelled by method, route, and status code
 
 ---
 
@@ -1250,13 +1255,14 @@ The existing `GET /internal/metrics` endpoint returns a custom JSON snapshot of 
 Prometheus exposition format is the de-facto standard for time-series metrics collection. Adding it enables:
 
 - **Node.js runtime visibility** — CPU usage, heap size, event-loop lag, GC duration, libuv handle counts — out of the box with zero instrumentation code
+- **HTTP traffic visibility** — request rates, error rates, and latency percentiles per route via `http_requests_total` and `http_request_duration_seconds`
 - **Grafana dashboards** — plug-and-play with the standard Node.js dashboard (ID 11159)
-- **Alerting** — heap threshold alerts, event-loop saturation alerts without custom code
+- **Alerting** — heap threshold alerts, p99 latency alerts, error-rate spikes without custom code
 - **Cloud-native compatibility** — works with Prometheus Operator on Kubernetes, AWS Managed Prometheus, Grafana Cloud
 
 ---
 
-### 12.2 — Implementation
+### 12.2 — Default Node.js Metrics
 
 #### Dependency
 
@@ -1264,7 +1270,7 @@ Prometheus exposition format is the de-facto standard for time-series metrics co
 prom-client  (v15+)
 ```
 
-`prom-client` is the official Prometheus client for Node.js. It includes `collectDefaultMetrics()` which automatically instruments the following using native Node.js APIs:
+`prom-client` is the official Prometheus client for Node.js. `collectDefaultMetrics()` automatically instruments the following using native Node.js APIs:
 
 | Metric | Source |
 |--------|--------|
@@ -1278,22 +1284,105 @@ prom-client  (v15+)
 | `nodejs_active_handles_total` | `process._getActiveHandles()` |
 | `nodejs_active_requests_total` | `process._getActiveRequests()` |
 
-#### Plugin File — `src/plugins/prometheus.ts`
+---
+
+### 12.3 — HTTP Request Metrics
+
+#### Metrics Defined
+
+```typescript
+const httpRequestsTotal = new client.Counter({
+  name: "http_requests_total",
+  help: "Total number of HTTP requests",
+  labelNames: ["method", "route", "status_code"],
+  registers: [register],
+});
+
+const httpRequestDuration = new client.Histogram({
+  name: "http_request_duration_seconds",
+  help: "HTTP request latency in seconds",
+  labelNames: ["method", "route", "status_code"],
+  buckets: [0.01, 0.05, 0.1, 0.2, 0.5, 1, 2, 5],
+  registers: [register],
+});
+```
+
+**Bucket rationale:** The eight buckets span 10 ms → 5 s, covering the expected range for a JSON API:
+- `0.01` — fast in-memory/cache responses
+- `0.05–0.1` — normal Supabase queries
+- `0.2–0.5` — complex analytics aggregations
+- `1–5` — Haversine recalculation, slow queries, timeouts
+
+#### Fastify Hooks
+
+| Hook | Action |
+|------|--------|
+| `onRequest` | Records `process.hrtime()` into a `WeakMap<IncomingMessage, [number, number]>` |
+| `onResponse` | Reads start time, computes elapsed seconds, calls `observe()` + `inc()`, deletes WeakMap entry |
+
+**Why `WeakMap` instead of patching `request.raw`:**  
+Attaching properties to `IncomingMessage` requires unsafe type casting (`as unknown as ...`) and pollutes the Node.js HTTP object. A `WeakMap` keyed on `request.raw` is garbage-collected automatically when the request is destroyed — no memory leaks, no type hacks.
+
+**Route label via `request.routeOptions.url`:**  
+Using `request.url` would produce a unique label per request (e.g. `/attendance/my-sessions?page=1&limit=20`), causing unbounded cardinality. `request.routeOptions.url` returns the registered route pattern (e.g. `/attendance/my-sessions`), keeping cardinality bounded to the number of routes.
+
+**Self-scrape exclusion:**  
+The `onResponse` hook skips `route === "/metrics"` to avoid recording scrape requests as application traffic.
+
+---
+
+### 12.4 — Full Plugin File
+
+**`src/plugins/prometheus.ts`**
 
 ```typescript
 import type { FastifyPluginAsync } from "fastify";
+import type { IncomingMessage } from "http";
 import client from "prom-client";
 
-// Isolated registry — avoids polluting the global prom-client default registry
-// in case other libraries also use prom-client internally.
 const register = new client.Registry();
-
-// Default Node.js metrics: CPU usage, heap, event-loop lag, GC, libuv handles.
 client.collectDefaultMetrics({ register });
 
+const httpRequestsTotal = new client.Counter({
+  name: "http_requests_total",
+  help: "Total number of HTTP requests",
+  labelNames: ["method", "route", "status_code"],
+  registers: [register],
+});
+
+const httpRequestDuration = new client.Histogram({
+  name: "http_request_duration_seconds",
+  help: "HTTP request latency in seconds",
+  labelNames: ["method", "route", "status_code"],
+  buckets: [0.01, 0.05, 0.1, 0.2, 0.5, 1, 2, 5],
+  registers: [register],
+});
+
+const timings = new WeakMap<IncomingMessage, [number, number]>();
+
 const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
+  fastify.addHook("onRequest", (request, _reply, done) => {
+    timings.set(request.raw, process.hrtime());
+    done();
+  });
+
+  fastify.addHook("onResponse", (request, reply, done) => {
+    const route = request.routeOptions?.url ?? request.url;
+    if (route === "/metrics") { done(); return; }
+
+    const start = timings.get(request.raw);
+    if (start !== undefined) {
+      const diff = process.hrtime(start);
+      const seconds = diff[0] + diff[1] / 1e9;
+      const labels = { method: request.method, route, status_code: String(reply.statusCode) };
+      httpRequestDuration.labels(labels).observe(seconds);
+      httpRequestsTotal.labels(labels).inc();
+      timings.delete(request.raw);
+    }
+    done();
+  });
+
   fastify.get("/metrics", async (_request, reply) => {
-    // Prometheus exposition format — no auth required (scraped internally).
     await reply
       .header("Content-Type", register.contentType)
       .send(await register.metrics());
@@ -1303,26 +1392,18 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
 export default prometheusPlugin;
 ```
 
-**Design decisions:**
-
-- **Isolated registry** — `new client.Registry()` instead of `client.register` (the global singleton). Prevents metric registration conflicts if any transitive dependency also uses `prom-client`.
-- **No auth** — Prometheus scrapers cannot present JWTs. The endpoint is intended to be scraped from within the same private network / VPC, not exposed to the public internet. Access control is enforced at the infrastructure layer (VPC security groups, Nginx allow-list, Kubernetes `NetworkPolicy`).
-- **`async reply.send(await register.metrics())`** — `register.metrics()` is async (returns a `Promise<string>`); awaiting it before `send` ensures the full payload is ready.
-
 #### Registration in `src/app.ts`
 
 ```typescript
 import prometheusPlugin from "./plugins/prometheus.js";
 
-// Registered before registerJwt() so the route sits outside the auth scope
+// Registered before registerJwt() — route sits outside auth scope
 await app.register(prometheusPlugin);
 ```
 
-Placement before `registerJwt` is intentional — it ensures the `/metrics` route is never accidentally caught by the JWT `preHandler` if route-level auth were ever applied globally.
-
 ---
 
-### 12.3 — Endpoint Comparison
+### 12.5 — Endpoint Comparison
 
 | | `GET /metrics` | `GET /internal/metrics` |
 |-|----------------|-------------------------|
@@ -1330,7 +1411,7 @@ Placement before `registerJwt` is intentional — it ensures the `/metrics` rout
 | Auth | None | JWT + ADMIN |
 | Consumer | Prometheus scraper, Grafana Agent | Human operator, internal dashboards |
 | Content-Type | `text/plain; version=0.0.4` | `application/json` |
-| Data | Node.js runtime stats (CPU, heap, GC, event loop) | App-level counters (queue depth, recalculation timings) |
+| Data | Node.js runtime + HTTP request stats | App-level counters (queue depth, recalculation timings) |
 | Phase introduced | Phase 12 | Phase 8 |
 
 ---
@@ -1339,8 +1420,8 @@ Placement before `registerJwt` is intentional — it ensures the `/metrics` rout
 
 | File | Action |
 |------|--------|
-| `src/plugins/prometheus.ts` | **NEW** — prom-client registry, `collectDefaultMetrics`, `/metrics` route |
-| `src/app.ts` | **MODIFIED** — import + `await app.register(prometheusPlugin)` |
+| `src/plugins/prometheus.ts` | **NEW** — isolated registry, default metrics, HTTP counter + histogram, Fastify hooks, `/metrics` route |
+| `src/app.ts` | **MODIFIED** — import + `await app.register(prometheusPlugin)` before JWT |
 | `package.json` | **MODIFIED** — `prom-client` added to dependencies |
 
 ---
@@ -1359,6 +1440,19 @@ nodejs_heap_size_used_bytes 24756224
 # HELP nodejs_eventloop_lag_seconds Lag of event loop in seconds.
 # TYPE nodejs_eventloop_lag_seconds gauge
 nodejs_eventloop_lag_seconds 0.000312
+
+# HELP http_requests_total Total number of HTTP requests
+# TYPE http_requests_total counter
+http_requests_total{method="POST",route="/attendance/check-out",status_code="200"} 47
+http_requests_total{method="POST",route="/locations/batch",status_code="200"} 312
+http_requests_total{method="GET",route="/attendance/my-sessions",status_code="401"} 3
+
+# HELP http_request_duration_seconds HTTP request latency in seconds
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_bucket{le="0.01",method="GET",route="/health",status_code="200"} 120
+http_request_duration_seconds_bucket{le="0.1",method="POST",route="/attendance/check-out",status_code="200"} 44
+http_request_duration_seconds_sum{method="POST",route="/attendance/check-out",status_code="200"} 3.821
+http_request_duration_seconds_count{method="POST",route="/attendance/check-out",status_code="200"} 47
 ```
 
 ---
@@ -1374,3 +1468,8 @@ nodejs_eventloop_lag_seconds 0.000312
 | `GET /internal/metrics` unchanged | Still requires JWT + ADMIN |
 | Default metrics collected | CPU, heap, GC, event-loop lag, handles |
 | Isolated registry | `new client.Registry()` — not the global singleton |
+| `http_requests_total` counter | Labelled by method, route pattern, status code |
+| `http_request_duration_seconds` histogram | 8 buckets: 10ms → 5s |
+| Timer storage | `WeakMap<IncomingMessage>` — no type casting, no memory leaks |
+| Route cardinality | `routeOptions.url` (pattern) not `request.url` (full path) |
+| Self-scrape excluded | `/metrics` route skipped in `onResponse` hook |
