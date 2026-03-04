@@ -1,56 +1,62 @@
 name: Deploy FieldTrack Backend
 
 on:
-  push:
-    branches:
-      - master
   workflow_dispatch:
 
+env:
+  IMAGE_NAME: ghcr.io/rajashish147/fieldtrack-backend
+
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-      - name: Checkout repo
+
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup SSH
+      - name: Login to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build Docker image
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DO_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.DO_HOST }} >> ~/.ssh/known_hosts
+          docker build \
+            -t $IMAGE_NAME:latest \
+            -t $IMAGE_NAME:${{ github.sha }} \
+            ./backend
 
-      - name: Deploy over SSH
+      - name: Push Docker image
         run: |
-          ssh ${{ secrets.DO_USER }}@${{ secrets.DO_HOST }} << 'EOF'
-            set -e
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:${{ github.sha }}
 
-            cd ~/FieldTrack-2.0/backend
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            echo "Logging into GHCR..."
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            echo "Pulling latest code..."
-            git pull origin master
+            echo "Pulling latest image..."
+            docker pull ghcr.io/rajashish147/fieldtrack-backend:latest
 
             echo "Stopping old container..."
             docker stop fieldtrack || true
             docker rm fieldtrack || true
-
-            echo "Building new image..."
-            docker build -t fieldtrack:latest .
 
             echo "Starting new container..."
             docker run -d \
               --name fieldtrack \
               --restart unless-stopped \
               -p 3000:3000 \
-              --env-file .env \
-              fieldtrack:latest
+              --env-file ~/FieldTrack-2.0/backend/.env \
+              ghcr.io/rajashish147/fieldtrack-backend:latest
 
-            echo "Waiting for health..."
-            sleep 8
-
-            echo "Checking health..."
-            curl -f http://localhost:3000/health
-
-            echo "Deploy successful."
-          EOF
+            echo "Deployment completed successfully"
