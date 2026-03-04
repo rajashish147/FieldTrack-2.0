@@ -523,3 +523,261 @@ curl http://localhost:3000/internal/metrics \
 | `/internal/metrics` secured | `authenticate` + `requireRole("ADMIN")` applied |
 | Expense module files | 5 files created in `src/modules/expenses/` |
 | Routes registered in `routes/index.ts` | `expensesRoutes` registered |
+
+---
+
+## Phase 9 — Admin Analytics Layer
+
+### Architecture: Route → Controller → Service → Repository
+
+```mermaid
+flowchart LR
+    A["ADMIN Client"] --> B["analytics.routes.ts"]
+    B -->|"authenticate + requireRole(ADMIN)"| C["analytics.controller.ts"]
+    C --> D["analytics.service.ts"]
+    D -->|"two-query pattern"| E["analytics.repository.ts"]
+    E --> F1["attendance_sessions"]
+    E --> F2["session_summaries"]
+    E --> F3["expenses"]
+```
+
+### Files Created
+
+| File | Layer | Purpose |
+|------|-------|---------|
+| `analytics.schema.ts` | Types | Zod query param schemas, response data types, internal row interfaces |
+| `analytics.repository.ts` | Repository | Minimal-select DB queries; all scoped via `enforceTenant()` |
+| `analytics.service.ts` | Service | Aggregation logic, date validation, grouping by user_id |
+| `analytics.controller.ts` | Controller | Zod parsing, service delegation, `{ success, data }` response shape |
+| `analytics.routes.ts` | Routes | 3 endpoints; all require `authenticate` + `requireRole("ADMIN")` |
+
+---
+
+### Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/admin/org-summary` | JWT + ADMIN | Org-wide session/expense aggregate |
+| `GET` | `/admin/user-summary` | JWT + ADMIN | Per-user session/expense aggregate |
+| `GET` | `/admin/top-performers` | JWT + ADMIN | Ranked leaderboard by metric |
+
+All three endpoints accept optional `from` and `to` ISO-8601 date query parameters. If both are provided and `from > to`, the service throws `400 Bad Request`.
+
+---
+
+### Endpoint 1 — GET /admin/org-summary
+
+**Query params:** `from` (optional ISO-8601), `to` (optional ISO-8601)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "totalSessions": 142,
+    "totalDistanceMeters": 87432.5,
+    "totalDurationSeconds": 312840,
+    "totalExpenses": 31,
+    "approvedExpenseAmount": 1249.75,
+    "rejectedExpenseAmount": 89.99,
+    "activeUsersCount": 18
+  }
+}
+```
+
+**Aggregation strategy:**
+1. Query `attendance_sessions` for `{id, user_id}` within date range — org-scoped via `enforceTenant()`.
+2. Query `session_summaries` for those session IDs — org double-checked via `enforceTenant()`.
+3. Accumulate `total_distance_meters` and `duration_seconds`; collect distinct `user_id` into a `Set`.
+4. Query `expenses` for `{amount, status}` within same date range.
+5. Aggregate expense counts and totals by status in a single pass.
+
+**Why session_summaries instead of attendance_sessions + locations:**  
+`session_summaries` contains one pre-computed row per closed session. Reading distance and duration from it avoids scanning the `locations` table which can hold 30,000+ GPS points per session. This makes org-level aggregation O(sessions) instead of O(GPS points).
+
+---
+
+### Endpoint 2 — GET /admin/user-summary
+
+**Query params:** `userId` (UUID, required), `from` (optional), `to` (optional)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "sessionsCount": 12,
+    "totalDistanceMeters": 7821.3,
+    "totalDurationSeconds": 28800,
+    "totalExpenses": 4,
+    "approvedExpenseAmount": 312.50,
+    "averageDistancePerSession": 651.78,
+    "averageSessionDurationSeconds": 2400
+  }
+}
+```
+
+**User validation:**  
+Before running any aggregation the service calls `checkUserHasSessionsInOrg()` — a lightweight `.select("id").limit(1)` on `attendance_sessions` with `user_id` + `enforceTenant()`. If no session exists for this user in the org, `404 Not Found` is returned. This distinguishes "user not in this org" from "user exists but has zero sessions in this date range."
+
+**Averages:**  
+`averageDistancePerSession` and `averageSessionDurationSeconds` are computed in the service layer. Both return `0` when `sessionsCount === 0` to avoid division-by-zero.
+
+---
+
+### Endpoint 3 — GET /admin/top-performers
+
+**Query params:** `metric` (required: `distance` | `duration` | `sessions`), `from` (optional), `to` (optional), `limit` (1–50, default 10)
+
+**Response (metric=distance):**
+```json
+{
+  "success": true,
+  "data": [
+    { "userId": "uuid-1", "totalDistanceMeters": 12340.5 },
+    { "userId": "uuid-2", "totalDistanceMeters": 9876.0 }
+  ]
+}
+```
+
+Only the relevant metric field is included in each entry; unused metric fields are omitted to keep responses minimal.
+
+**Aggregation strategy:**
+1. Same two-query pattern: resolve session IDs, then fetch `session_summaries` rows.
+2. Group by `user_id` in a single O(n) pass using a `Map`. Each entry accumulates `totalDistanceMeters`, `totalDurationSeconds`, and `sessionsCount`.
+3. Sort entries descending by the chosen metric.
+4. Slice to `limit` and shape output (only the sorted-by field included per entry).
+
+**`metric` enum validation:**  
+Zod validates `metric` against `["distance", "duration", "sessions"]`. Any other value returns `400 Bad Request` before the DB is touched.
+
+---
+
+### Aggregation Strategy and Performance
+
+#### Two-Query Pattern
+
+All session-based analytics use a consistent two-query approach:
+
+```
+Query 1: attendance_sessions
+  SELECT id, user_id
+  WHERE organization_id = :orgId
+    AND check_in_at >= :from
+    AND check_in_at <= :to
+
+Query 2: session_summaries
+  SELECT user_id, total_distance_meters, duration_seconds
+  WHERE session_id IN (:sessionIds)
+    AND organization_id = :orgId   ← defense-in-depth via enforceTenant()
+```
+
+This avoids:
+- Raw SQL joins
+- N+1 query patterns
+- Loading raw GPS location data
+- Full-table scans (when indexes are in place)
+
+#### Why Not Direct session_summaries Scan
+
+PostgREST (Supabase's REST interface) does not expose SQL aggregate functions (`SUM`, `COUNT DISTINCT`, `GROUP BY`) via the standard supabase-js API without raw SQL. Rather than using `supabase.rpc()` (which requires stored procedures), all aggregation is performed in application memory on pre-filtered, minimal-column result sets.
+
+This is safe and efficient because:
+- `session_summaries` rows are pre-aggregated (one row per closed session)
+- Only 2 numeric columns + `user_id` are fetched per row (~40 bytes)
+- Typical date-range queries for 1–3 months return hundreds to low-thousands of rows
+
+---
+
+### Tenant Isolation
+
+Every repository method calls `enforceTenant()` which appends `.eq("organization_id", request.organizationId)` before the terminal operation. For the two-query pattern, both queries are independently enforced:
+
+- `attendance_sessions` query: scoped by `organization_id`
+- `session_summaries` query: double-scoped by `organization_id` in addition to the `session_id IN (...)` filter — an admin from org A cannot resolve session IDs from org B because the first query itself is org-locked
+
+---
+
+### Zod Validation Summary
+
+| Parameter | Rule |
+|-----------|------|
+| `from` | Optional, must be ISO-8601 with timezone offset when provided |
+| `to` | Optional, must be ISO-8601 with timezone offset when provided |
+| `from` + `to` | When both present: `from` must not be later than `to` (service-layer check) |
+| `userId` | Required for user-summary; must be a valid UUID |
+| `metric` | Required for top-performers; must be `distance`, `duration`, or `sessions` |
+| `limit` | Optional; coerced integer, 1–50, default 10 |
+
+---
+
+### Index Dependencies
+
+The analytics layer relies on the following indexes for efficient execution. These should be created in the database before deploying Phase 9:
+
+```sql
+-- Range scan for session list resolution
+-- Used by: org-summary, user-summary, top-performers (first query)
+CREATE INDEX idx_attendance_sessions_org_checkin
+  ON attendance_sessions(organization_id, check_in_at DESC);
+
+-- User-scoped range scan
+-- Used by: user-summary (first query)
+CREATE INDEX idx_attendance_sessions_user_checkin
+  ON attendance_sessions(user_id, organization_id, check_in_at DESC);
+
+-- IN-list lookup from resolved session IDs
+-- Used by: all three endpoints (second query)
+CREATE INDEX idx_session_summaries_session_org
+  ON session_summaries(session_id, organization_id);
+
+-- Expense range scan (already recommended in Phase 8; listed here for completeness)
+CREATE INDEX idx_expenses_org_created_at
+  ON expenses(organization_id, created_at DESC);
+
+-- User-scoped expense scan
+CREATE INDEX idx_expenses_user_org
+  ON expenses(user_id, organization_id, created_at DESC);
+```
+
+---
+
+### Example curl Requests
+
+```bash
+# Org summary — last 30 days
+curl "http://localhost:3000/admin/org-summary?from=2026-02-01T00:00:00Z&to=2026-03-03T23:59:59Z" \
+  -H "Authorization: Bearer <ADMIN_JWT>"
+
+# Org summary — all time (no date filter)
+curl "http://localhost:3000/admin/org-summary" \
+  -H "Authorization: Bearer <ADMIN_JWT>"
+
+# User summary
+curl "http://localhost:3000/admin/user-summary?userId=9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d&from=2026-02-01T00:00:00Z&to=2026-03-03T23:59:59Z" \
+  -H "Authorization: Bearer <ADMIN_JWT>"
+
+# Top 5 by distance
+curl "http://localhost:3000/admin/top-performers?metric=distance&limit=5&from=2026-02-01T00:00:00Z" \
+  -H "Authorization: Bearer <ADMIN_JWT>"
+
+# Top 10 by session count (default limit)
+curl "http://localhost:3000/admin/top-performers?metric=sessions" \
+  -H "Authorization: Bearer <ADMIN_JWT>"
+
+# Invalid date range — returns 400
+curl "http://localhost:3000/admin/org-summary?from=2026-03-01T00:00:00Z&to=2026-02-01T00:00:00Z" \
+  -H "Authorization: Bearer <ADMIN_JWT>"
+```
+
+### Verification Results
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | Zero errors |
+| All endpoints require ADMIN | `authenticate` + `requireRole("ADMIN")` on all routes |
+| No `select("*")` in analytics | Only named columns fetched |
+| No raw SQL | Supabase JS client only |
+| `from > to` guard | `BadRequestError` thrown in service before any DB call |
+| `userId` validation | `checkUserHasSessionsInOrg()` before aggregation |
+| Routes registered | `analyticsRoutes` registered in `routes/index.ts` |
