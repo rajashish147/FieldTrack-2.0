@@ -48,6 +48,7 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             cd /home/ashish/FieldTrack-2.0/backend
-            git pull
+            git fetch origin
+            git reset --hard origin/master
             chmod +x scripts/deploy-bluegreen.sh
-            ./scripts/deploy-bluegreen.sh
+            ./scripts/deploy-bluegreen.sh ${{ env.SHA_SHORT }}
