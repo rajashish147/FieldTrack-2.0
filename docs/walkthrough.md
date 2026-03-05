@@ -1098,3 +1098,136 @@ Phase 10 removes all blockers for multi-instance deployment:
 | `enqueueDistanceJob` (BullMQ) | Jobs stored in Redis, survive restarts |
 | BullMQ worker starts on boot | `startDistanceWorker(app)` called in `buildApp()` |
 | Crash recovery re-enqueues to Redis | `performStartupRecovery` in `distance.worker.ts` |
+
+---
+
+## Phase 11 — CI/CD Deployment Hardening
+
+### Overview
+
+Phase 11 hardens the deployment lifecycle without touching any business logic, queue implementation, or Supabase client configuration. All changes target operational correctness: safe container shutdown, prevention of duplicate worker processes, container health observability, and a deployment audit trail.
+
+---
+
+### 11.1 — Graceful Shutdown
+
+**File:** `src/server.ts`
+
+Docker sends `SIGTERM` when stopping a container (`docker stop`, rolling deploy, ECS task replacement). Without a handler, Node.js exits immediately — BullMQ workers can leave jobs mid-flight and Redis connections are abandoned without a proper close handshake, sometimes causing delay on the next startup.
+
+**Implementation:**
+
+```typescript
+const shutdown = async (signal: string): Promise<void> => {
+  app.log.info(`${signal} received, shutting down gracefully...`);
+  await app.close();  // closes HTTP server + drains in-flight requests
+  process.exit(0);
+};
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT",  () => void shutdown("SIGINT"));
+```
+
+`app.close()` is Fastify's built-in drain mechanism — it stops accepting new connections, waits for in-flight requests to complete, then tears down plugins in reverse registration order (including BullMQ workers registered as Fastify plugins in the future).
+
+Both `SIGTERM` (Docker/orchestrator stop) and `SIGINT` (Ctrl-C in dev) are handled identically.
+
+---
+
+### 11.2 — Worker Double-Start Guard
+
+**File:** `src/workers/distance.worker.ts`
+
+`startDistanceWorker()` is called once in `buildApp()`. In development with `tsx watch`, hot-reload can re-evaluate modules without restarting the process, potentially spawning a second BullMQ `Worker` instance connected to the same Redis queue. Two workers competing over the same queue can cause duplicate job processing and confusing log output.
+
+**Implementation:**
+
+```typescript
+let workerStarted = false;
+
+export function startDistanceWorker(app: FastifyInstance): Worker | null {
+  if (workerStarted) {
+    app.log.warn("startDistanceWorker called more than once — ignoring duplicate start");
+    return null;
+  }
+  workerStarted = true;
+  // ... existing worker creation
+}
+```
+
+The module-level `workerStarted` flag persists for the lifetime of the Node.js process. A second call logs a warning (visible in structured logs) and returns without creating a new worker.
+
+---
+
+### 11.3 — Docker Healthcheck
+
+**File:** `Dockerfile`
+
+Without a `HEALTHCHECK`, Docker and orchestrators (ECS, Kubernetes, Fly.io) cannot distinguish between a container that is starting up and one that has crashed silently. CI/CD pipelines that deploy via rolling update have no signal to know when to shift traffic.
+
+**Implementation:**
+
+```dockerfile
+RUN apk add --no-cache curl
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
+```
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `--interval` | 30s | Check every 30 seconds after healthy |
+| `--timeout` | 5s | Container marked unhealthy if `/health` takes > 5s |
+| `--start-period` | 10s | Grace period before first check — allows Redis connect + recovery scan |
+| `--retries` | 3 | Three consecutive failures → `unhealthy` (transient errors tolerated) |
+
+The probe hits `GET /health` which is the existing health route — no new endpoint needed. `curl -f` returns exit code 22 on HTTP 4xx/5xx, which triggers the `|| exit 1` fallback.
+
+`curl` is installed via `apk add --no-cache curl` since the base image (`node:18-alpine`) does not include it by default.
+
+---
+
+### 11.4 — Deployment Log Marker
+
+**File:** `src/server.ts`
+
+GitHub Actions injects `GITHUB_SHA` as an environment variable during workflow runs. Logging it at boot time creates an auditable record in structured logs:
+
+```typescript
+app.log.info(
+  { version: process.env["GITHUB_SHA"] ?? "manual" },
+  "Server booted",
+);
+```
+
+Example log line in production (Pino JSON):
+```json
+{ "level": "info", "version": "a3f9c1d7b...", "msg": "Server booted" }
+```
+
+When `GITHUB_SHA` is absent (local dev, manual deploy), the value is `"manual"`. This field can be indexed in Datadog, CloudWatch Logs Insights, or any structured log query to answer "which git commit is running right now?"
+
+---
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/server.ts` | Added `SIGTERM`/`SIGINT` graceful shutdown handlers; added boot log marker with `GITHUB_SHA` |
+| `src/workers/distance.worker.ts` | Added `workerStarted` flag; `startDistanceWorker` returns `Worker \| null` and is idempotent |
+| `backend/Dockerfile` | Added `apk add curl`; added `HEALTHCHECK` directive |
+
+---
+
+### Verification Results
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | ✅ Zero errors |
+| `SIGTERM` handler | Calls `app.close()` then `process.exit(0)` |
+| `SIGINT` handler | Same as SIGTERM — safe for local dev Ctrl-C |
+| Worker double-start | Second call to `startDistanceWorker` returns `null` + logs warning |
+| `HEALTHCHECK` in Dockerfile | `curl -f http://localhost:3000/health` every 30s |
+| `curl` available in image | `apk add --no-cache curl` in production stage |
+| Boot log marker | `{ version: GITHUB_SHA \| "manual" }` logged after listen |
+| `host: "0.0.0.0"` binding | Confirmed unchanged — container accessible from outside |

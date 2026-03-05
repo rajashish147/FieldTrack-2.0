@@ -15,6 +15,15 @@ interface DistanceJobData {
 // ─── Number of recovered sessions batched per event-loop tick ────────────────
 const RECOVERY_BATCH_SIZE = 50;
 
+// ─── Worker Start Guard ───────────────────────────────────────────────────────
+
+/**
+ * Phase 11: Prevents the worker from being started more than once per process.
+ * Hot-reload (tsx watch) or accidental double-call in app.ts must not spawn
+ * duplicate BullMQ workers competing over the same Redis queue.
+ */
+let workerStarted = false;
+
 // ─── Worker ───────────────────────────────────────────────────────────────────
 
 /**
@@ -28,9 +37,16 @@ const RECOVERY_BATCH_SIZE = 50;
  *  - No event-loop blocking — BullMQ handles concurrency via its own scheduler
  *  - Structured logs on every job with jobId + executionTimeMs correlation
  *
+ * Phase 11: Guarded by workerStarted flag — idempotent across hot reloads.
+ *
  * @param app - Fastify instance used for structured logging and session data access
  */
-export function startDistanceWorker(app: FastifyInstance): Worker {
+export function startDistanceWorker(app: FastifyInstance): Worker | null {
+  if (workerStarted) {
+    app.log.warn("startDistanceWorker called more than once — ignoring duplicate start");
+    return null;
+  }
+  workerStarted = true;
   const worker = new Worker<DistanceJobData>(
     "distance-engine",
     async (job: Job<DistanceJobData>): Promise<void> => {
