@@ -41,16 +41,17 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
   // On response: compute elapsed time, record histogram + counter.
   // Skips the /metrics route itself to avoid self-referential noise.
   fastify.addHook("onResponse", (request, reply, done) => {
-    const route = request.routeOptions?.url ?? request.raw.url ?? "unknown";
-
-    if (route === "/metrics") {
-      done();
-      return;
-    }
-
     const start = timings.get(request.raw);
 
     if (start !== undefined) {
+      const route = request.routeOptions?.url ?? request.raw.url ?? "unknown";
+      
+      if (route === "/metrics") {
+        timings.delete(request.raw);
+        done();
+        return;
+      }
+
       const diff = process.hrtime(start);
       const seconds = diff[0] + diff[1] / 1e9;
       const method = request.method;
