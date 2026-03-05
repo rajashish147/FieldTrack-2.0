@@ -4,6 +4,7 @@ import client from "prom-client";
 declare module "fastify" {
   interface FastifyRequest {
     startTime?: [number, number];
+    routerPath?: string;
   }
 }
 
