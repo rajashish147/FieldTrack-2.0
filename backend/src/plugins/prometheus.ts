@@ -65,14 +65,14 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     httpRequestsTotal.inc({
       method: request.method,
       route,
-      status_code: reply.statusCode
+      status_code: String(reply.statusCode)
     });
 
     httpRequestDuration.observe(
       {
         method: request.method,
         route,
-        status_code: reply.statusCode
+        status_code: String(reply.statusCode)
       },
       duration
     );
