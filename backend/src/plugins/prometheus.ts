@@ -1,3 +1,4 @@
+import fp from "fastify-plugin";
 import type { FastifyPluginAsync } from "fastify";
 import client from "prom-client";
 
@@ -7,15 +8,8 @@ declare module "fastify" {
   }
 }
 
-// Create isolated Prometheus registry
 const register = new client.Registry();
-
-// Collect default Node.js metrics
 client.collectDefaultMetrics({ register });
-
-/* -------------------------------------------------------------------------- */
-/*                                  Metrics                                   */
-/* -------------------------------------------------------------------------- */
 
 const httpRequestsTotal = new client.Counter({
   name: "http_requests_total",
@@ -38,20 +32,11 @@ const httpRequestsInFlight = new client.Gauge({
   registers: [register],
 });
 
-/* -------------------------------------------------------------------------- */
-/*                              Fastify Plugin                                */
-/* -------------------------------------------------------------------------- */
-
 const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
-
-  /* --------------------------- Request Start Hook -------------------------- */
-
   fastify.addHook("onRequest", async (request) => {
     request.startTime = process.hrtime();
     httpRequestsInFlight.inc();
   });
-
-  /* -------------------------- Response Complete Hook ----------------------- */
 
   fastify.addHook("onResponse", async (request, reply) => {
     if (!request.startTime) return;
@@ -65,7 +50,6 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
       request.raw.url?.split("?")[0] ??
       "unknown";
 
-    // Skip self-scraping
     if (route === "/metrics") {
       httpRequestsInFlight.dec();
       return;
@@ -82,15 +66,11 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     httpRequestsInFlight.dec();
   });
 
-  /* ----------------------------- Error Hook -------------------------------- */
-
   fastify.addHook("onError", async (request) => {
     if (request.startTime) {
       httpRequestsInFlight.dec();
     }
   });
-
-  /* ----------------------------- Metrics Route ----------------------------- */
 
   fastify.get("/metrics", async (_request, reply) => {
     reply.header("Content-Type", register.contentType);
@@ -98,4 +78,6 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
   });
 };
 
-export default prometheusPlugin;
+export default fp(prometheusPlugin, {
+  name: "prometheus-plugin",
+});
