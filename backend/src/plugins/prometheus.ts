@@ -45,9 +45,9 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     httpRequestsInFlight.inc();
   });
 
-  // On send: compute elapsed time, record histogram + counter.
+  // On response: compute elapsed time, record histogram + counter.
   // Skips the /metrics route itself to avoid self-referential noise.
-  fastify.addHook("onSend", async (request, reply) => {
+  fastify.addHook("onResponse", async (request, reply) => {
     if (!request.startTime) return;
 
     const diff = process.hrtime(request.startTime);
@@ -75,10 +75,7 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
       },
       duration
     );
-  });
 
-  // Decrement in-flight counter after response is sent.
-  fastify.addHook("onResponse", async () => {
     httpRequestsInFlight.dec();
   });
 
