@@ -60,9 +60,9 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
     const duration = diff[0] + diff[1] / 1e9;
 
     const route =
+      (request as any).routerPath ??
       request.routeOptions?.url ??
-      (request as { routerPath?: string }).routerPath ??
-      request.raw.url ??
+      request.raw.url?.split("?")[0] ??
       "unknown";
 
     // Skip self-scraping
