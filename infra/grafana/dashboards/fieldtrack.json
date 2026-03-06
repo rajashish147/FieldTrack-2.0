@@ -1,0 +1,548 @@
+{
+    "annotations": {
+        "list": [
+            {
+                "builtIn": 1,
+                "datasource": {
+                    "type": "grafana",
+                    "uid": "-- Grafana --"
+                },
+                "enable": true,
+                "hide": true,
+                "iconColor": "rgba(0, 211, 255, 1)",
+                "name": "Annotations & Alerts",
+                "type": "dashboard"
+            }
+        ]
+    },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [],
+    "panels": [
+        {
+            "title": "HTTP Request Rate (req/s)",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 0
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisLabel": "req/s",
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "showPoints": "auto",
+                        "stacking": {
+                            "mode": "none"
+                        }
+                    },
+                    "unit": "reqps"
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(http_requests_total{job=~\"fieldtrack-backend.*\"}[5m])) by (status_code)",
+                    "legendFormat": "{{status_code}}",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "title": "HTTP Request Latency (p50 / p95 / p99)",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 0
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisLabel": "seconds",
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "showPoints": "auto",
+                        "stacking": {
+                            "mode": "none"
+                        }
+                    },
+                    "unit": "s"
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=~\"fieldtrack-backend.*\"}[5m])) by (le))",
+                    "legendFormat": "p50",
+                    "refId": "A"
+                },
+                {
+                    "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=~\"fieldtrack-backend.*\"}[5m])) by (le))",
+                    "legendFormat": "p95",
+                    "refId": "B"
+                },
+                {
+                    "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=~\"fieldtrack-backend.*\"}[5m])) by (le))",
+                    "legendFormat": "p99",
+                    "refId": "C"
+                }
+            ]
+        },
+        {
+            "title": "In-Flight Requests",
+            "type": "stat",
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 0,
+                "y": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 50
+                            },
+                            {
+                                "color": "red",
+                                "value": 100
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "http_requests_in_flight{job=~\"fieldtrack-backend.*\"}",
+                    "legendFormat": "In-Flight",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "title": "Total Requests (24h)",
+            "type": "stat",
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 6,
+                "y": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "blue",
+                                "value": null
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "sum(increase(http_requests_total{job=~\"fieldtrack-backend.*\"}[24h]))",
+                    "legendFormat": "Total",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "title": "Error Rate (5xx)",
+            "type": "stat",
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 12,
+                "y": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "unit": "percentunit",
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.01
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.05
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(http_requests_total{job=~\"fieldtrack-backend.*\", status_code=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=~\"fieldtrack-backend.*\"}[5m]))",
+                    "legendFormat": "5xx Rate",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "title": "Uptime",
+            "type": "stat",
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 18,
+                "y": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "unit": "s",
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "process_uptime_seconds{job=~\"fieldtrack-backend.*\"}",
+                    "legendFormat": "Uptime",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "title": "Request Rate by Route",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 12
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 15,
+                        "lineWidth": 2
+                    },
+                    "unit": "reqps"
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(http_requests_total{job=~\"fieldtrack-backend.*\"}[5m])) by (route)",
+                    "legendFormat": "{{route}}",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "title": "Node.js Heap Memory",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 12
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "lineWidth": 2
+                    },
+                    "unit": "bytes"
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "nodejs_heap_size_used_bytes{job=~\"fieldtrack-backend.*\"}",
+                    "legendFormat": "Heap Used",
+                    "refId": "A"
+                },
+                {
+                    "expr": "nodejs_heap_size_total_bytes{job=~\"fieldtrack-backend.*\"}",
+                    "legendFormat": "Heap Total",
+                    "refId": "B"
+                },
+                {
+                    "expr": "process_resident_memory_bytes{job=~\"fieldtrack-backend.*\"}",
+                    "legendFormat": "RSS",
+                    "refId": "C"
+                }
+            ]
+        },
+        {
+            "title": "CPU Usage (%)",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 20
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "lineWidth": 2
+                    },
+                    "unit": "percentunit",
+                    "max": 1
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "1 - avg(rate(node_cpu_seconds_total{job=\"node-exporter\", mode=\"idle\"}[5m]))",
+                    "legendFormat": "CPU Usage",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "title": "System Memory Usage",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 20
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "lineWidth": 2
+                    },
+                    "unit": "bytes"
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "node_memory_MemTotal_bytes{job=\"node-exporter\"} - node_memory_MemAvailable_bytes{job=\"node-exporter\"}",
+                    "legendFormat": "Used",
+                    "refId": "A"
+                },
+                {
+                    "expr": "node_memory_MemTotal_bytes{job=\"node-exporter\"}",
+                    "legendFormat": "Total",
+                    "refId": "B"
+                }
+            ]
+        },
+        {
+            "title": "Disk Usage",
+            "type": "gauge",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 28
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "unit": "percentunit",
+                    "max": 1,
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.7
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.9
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "1 - (node_filesystem_avail_bytes{job=\"node-exporter\", mountpoint=\"/\", fstype!=\"tmpfs\"} / node_filesystem_size_bytes{job=\"node-exporter\", mountpoint=\"/\", fstype!=\"tmpfs\"})",
+                    "legendFormat": "Disk Used",
+                    "refId": "A"
+                }
+            ]
+        },
+        {
+            "title": "Network I/O",
+            "type": "timeseries",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 28
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": ""
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 15,
+                        "lineWidth": 2
+                    },
+                    "unit": "Bps"
+                },
+                "overrides": []
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(node_network_receive_bytes_total{job=\"node-exporter\", device!~\"lo|veth.*|docker.*|br-.*\"}[5m]))",
+                    "legendFormat": "Receive",
+                    "refId": "A"
+                },
+                {
+                    "expr": "sum(rate(node_network_transmit_bytes_total{job=\"node-exporter\", device!~\"lo|veth.*|docker.*|br-.*\"}[5m]))",
+                    "legendFormat": "Transmit",
+                    "refId": "B"
+                }
+            ]
+        }
+    ],
+    "schemaVersion": 39,
+    "tags": [
+        "fieldtrack",
+        "backend",
+        "monitoring"
+    ],
+    "templating": {
+        "list": []
+    },
+    "time": {
+        "from": "now-6h",
+        "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "browser",
+    "title": "FieldTrack 2.0 — Backend & System",
+    "uid": "fieldtrack-backend",
+    "version": 1
+}

@@ -1,0 +1,60 @@
+# FieldTrack 2.0 — Prometheus Configuration
+#
+# All containers share fieldtrack_network, so we scrape by Docker service name.
+#
+# Scrape targets:
+#   1. backend-blue  (port 3000 inside container, accessible as backend-blue:3000)
+#   2. backend-green (port 3000 inside container, accessible as backend-green:3000)
+#   3. node-exporter (port 9100, accessible as node-exporter:9100)
+#   4. prometheus    (self-monitoring)
+#
+# NOTE: Both blue and green are listed. Only the active container will be
+# running at any time. Prometheus will mark the stopped one as DOWN — this
+# is expected and harmless.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  # ── Fastify Backend (Blue) ──────────────────────────────────────────────────
+  - job_name: "fieldtrack-backend-blue"
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - "backend-blue:3000"
+        labels:
+          app: "fieldtrack"
+          component: "backend"
+          slot: "blue"
+
+  # ── Fastify Backend (Green) ─────────────────────────────────────────────────
+  - job_name: "fieldtrack-backend-green"
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - "backend-green:3000"
+        labels:
+          app: "fieldtrack"
+          component: "backend"
+          slot: "green"
+
+  # ── Node Exporter ───────────────────────────────────────────────────────────
+  - job_name: "node-exporter"
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - "node-exporter:9100"
+        labels:
+          app: "fieldtrack"
+          component: "host"
+
+  # ── Prometheus self-monitoring ──────────────────────────────────────────────
+  - job_name: "prometheus"
+    scrape_interval: 60s
+    static_configs:
+      - targets:
+          - "localhost:9090"
