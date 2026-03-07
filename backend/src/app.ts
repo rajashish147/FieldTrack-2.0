@@ -6,13 +6,15 @@ import { env } from "./config/env.js";
 import { getLoggerConfig } from "./config/logger.js";
 import { registerJwt } from "./plugins/jwt.js";
 import { registerRoutes } from "./routes/index.js";
-import fastifyRateLimit from "@fastify/rate-limit";
-import fastifyHelmet from "@fastify/helmet";
 import fastifyCompress from "@fastify/compress";
-import fastifyCors from "@fastify/cors";
 import { startDistanceWorker } from "./workers/distance.worker.js";
 import { AppError } from "./utils/errors.js";
 import prometheusPlugin from "./plugins/prometheus.js";
+// Phase 15: Dedicated security plugins
+import helmetPlugin from "./plugins/security/helmet.plugin.js";
+import corsPlugin from "./plugins/security/cors.plugin.js";
+import rateLimitPlugin from "./plugins/security/ratelimit.plugin.js";
+import abuseLoggingPlugin from "./plugins/security/abuse-logging.plugin.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -26,19 +28,17 @@ export async function buildApp(): Promise<FastifyInstance> {
     genReqId: () => randomUUID(),
   });
 
-  // ─── Phase 10: Security & Performance Plugins ───────────────────────────────
+  // ─── Phase 15: Security Plugin Stack ────────────────────────────────────────
+  // Registered in order: helmet → cors → rate-limit → abuse-logging.
+  // Each plugin is isolated in src/plugins/security/ for maintainability.
 
-  // Helmet sets secure HTTP headers (CSP, HSTS, X-Frame-Options, etc.)
-  await app.register(fastifyHelmet);
+  await app.register(helmetPlugin);
+  await app.register(corsPlugin);
+  await app.register(rateLimitPlugin);
+  await app.register(abuseLoggingPlugin);
 
   // Gzip/deflate/brotli response compression
   await app.register(fastifyCompress);
-
-  // CORS — restrict to origins listed in ALLOWED_ORIGINS env var
-  await app.register(fastifyCors, {
-    origin: env.ALLOWED_ORIGINS.length > 0 ? env.ALLOWED_ORIGINS : false,
-    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-  });
 
   // Enrich the active HTTP span with Fastify-level context that the HTTP
   // auto-instrumentation cannot see: the matched route pattern, the Fastify
@@ -50,7 +50,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     const span = trace.getSpan(context.active());
     if (span) {
       const spanContext = span.spanContext();
-      
+
       // Enrich logger with trace context for correlation in Grafana
       request.log = request.log.child({
         trace_id: spanContext.traceId,
@@ -100,10 +100,6 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // ─── Existing Plugins ───────────────────────────────────────────────────────
-
-  await app.register(fastifyRateLimit, {
-    global: false, // Applied selectively per-route
-  });
 
   // Prometheus metrics — unauthenticated GET /metrics (scrape endpoint)
   await app.register(prometheusPlugin);

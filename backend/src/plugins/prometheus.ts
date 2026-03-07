@@ -41,6 +41,31 @@ const httpRequestsInFlight = new client.Gauge({
   registers: [register],
 });
 
+// ─── Phase 15: Security Metrics ───────────────────────────────────────────────
+
+/**
+ * Incremented every time a request is rejected with HTTP 429 (rate limited).
+ * Labelled by route so abusive endpoints can be identified at a glance.
+ */
+export const securityRateLimitHits = new client.Counter({
+  name: "security_rate_limit_hits_total",
+  help: "Total number of requests rejected by the rate limiter (HTTP 429)",
+  labelNames: ["route"],
+  registers: [register],
+});
+
+/**
+ * Incremented every time an auth endpoint (e.g. login) is rate-limited,
+ * indicating a possible brute-force attack attempt.
+ * Labelled by ip to surface the source of repeated attempts.
+ */
+export const securityAuthBruteforce = new client.Counter({
+  name: "security_auth_bruteforce_total",
+  help: "Total number of auth endpoint requests blocked by rate limiting (brute-force signal)",
+  labelNames: ["ip"],
+  registers: [register],
+});
+
 const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.addHook("onRequest", async (request) => {
     request.startTime = process.hrtime();
