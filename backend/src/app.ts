@@ -49,6 +49,14 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.addHook("onRequest", async (request) => {
     const span = trace.getSpan(context.active());
     if (span) {
+      const spanContext = span.spanContext();
+      
+      // Enrich logger with trace context for correlation in Grafana
+      request.log = request.log.child({
+        trace_id: spanContext.traceId,
+        span_id: spanContext.spanId,
+      });
+
       if (request.routeOptions.url) {
         span.setAttribute("http.route", request.routeOptions.url);
       }
