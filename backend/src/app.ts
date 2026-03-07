@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "crypto";
+import { trace, context } from "@opentelemetry/api";
 import { env } from "./config/env.js";
 import { getLoggerConfig } from "./config/logger.js";
 import { registerJwt } from "./plugins/jwt.js";
@@ -39,9 +40,32 @@ export async function buildApp(): Promise<FastifyInstance> {
     methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   });
 
-  // Phase 10: Add x-request-id to every reply for end-to-end tracing
+  // Enrich the active HTTP span with Fastify-level context that the HTTP
+  // auto-instrumentation cannot see: the matched route pattern, the Fastify
+  // request ID, and the direct client IP.
+  //
+  // http.route uses the pattern (e.g. /users/:id) rather than the raw URL so
+  // that Grafana's service graph groups requests by route, not by value.
+  app.addHook("onRequest", async (request) => {
+    const span = trace.getSpan(context.active());
+    if (span) {
+      span.setAttribute("http.route", request.routeOptions.url);
+      span.setAttribute("http.method", request.method);
+      span.setAttribute("http.client_ip", request.ip);
+      span.setAttribute("request.id", String(request.id));
+      span.setAttribute("server.address", request.hostname);
+    }
+  });
+
+  // Phase 10: Add x-request-id to every reply for end-to-end tracing.
+  // Also stamp the final status code on the span; the span is still open
+  // during onSend (it closes after the socket write completes).
   app.addHook("onSend", async (request, reply) => {
     void reply.header("x-request-id", request.id);
+    const span = trace.getSpan(context.active());
+    if (span) {
+      span.setAttribute("http.status_code", reply.statusCode);
+    }
   });
 
   // Phase 10: Global error handler — unhandled errors include requestId
