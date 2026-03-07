@@ -1,8 +1,9 @@
 server:
   http_listen_port: 9080
+  grpc_listen_port: 0
 
 positions:
-  filename: /tmp/positions.yaml
+  filename: /tmp/promtail-positions.yaml
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
@@ -16,4 +17,35 @@ scrape_configs:
           - localhost
         labels:
           job: docker
-          __path__: /var/lib/docker/containers/*/*.log
+          __path__: /var/lib/docker/containers/*/*-json.log
+
+    pipeline_stages:
+
+      # Docker JSON log parsing
+      - docker: {}
+
+      # Extract container id from file path
+      - regex:
+          expression: '/var/lib/docker/containers/(?P<container_id>[a-f0-9]+)/.*'
+
+      # Attach container id as label
+      - labels:
+          container_id:
+
+      # Extract trace_id if present
+      - regex:
+          expression: 'trace_id":"(?P<trace_id>[a-f0-9]+)'
+
+      - labels:
+          trace_id:
+
+      # Parse JSON logs from Pino
+      - json:
+          expressions:
+            level: level
+            msg: msg
+            trace_id: trace_id
+            span_id: span_id
+
+      - labels:
+          level:
