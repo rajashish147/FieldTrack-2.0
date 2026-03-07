@@ -1,6 +1,7 @@
 import { Worker } from "bullmq";
 import type { Job } from "bullmq";
 import type { FastifyInstance } from "fastify";
+import { trace, SpanStatusCode } from "@opentelemetry/api";
 import { redisConnectionOptions } from "../config/redis.js";
 import { enqueueDistanceJob } from "./distance.queue.js";
 import { sessionSummaryService } from "../modules/session_summary/session_summary.service.js";
@@ -17,68 +18,78 @@ const RECOVERY_BATCH_SIZE = 50;
 
 // ─── Worker Start Guard ───────────────────────────────────────────────────────
 
-/**
- * Phase 11: Prevents the worker from being started more than once per process.
- * Hot-reload (tsx watch) or accidental double-call in app.ts must not spawn
- * duplicate BullMQ workers competing over the same Redis queue.
- */
 let workerStarted = false;
 
 // ─── Worker ───────────────────────────────────────────────────────────────────
 
-/**
- * Phase 10: BullMQ distance worker.
- *
- * Replaces the Phase 7 perpetual while-true in-memory loop with a proper
- * durable worker backed by Redis. Key improvements:
- *  - Jobs survive process crashes (persisted in Redis)
- *  - Automatic retry with exponential backoff (5 attempts)
- *  - Job deduplication via jobId = sessionId
- *  - No event-loop blocking — BullMQ handles concurrency via its own scheduler
- *  - Structured logs on every job with jobId + executionTimeMs correlation
- *
- * Phase 11: Guarded by workerStarted flag — idempotent across hot reloads.
- *
- * @param app - Fastify instance used for structured logging and session data access
- */
 export function startDistanceWorker(app: FastifyInstance): Worker | null {
   if (workerStarted) {
     app.log.warn("startDistanceWorker called more than once — ignoring duplicate start");
     return null;
   }
+
   workerStarted = true;
+
+  const tracer = trace.getTracer("bullmq-worker");
+
   const worker = new Worker<DistanceJobData>(
     "distance-engine",
     async (job: Job<DistanceJobData>): Promise<void> => {
-      const { sessionId } = job.data;
-      const jobId = job.id ?? sessionId;
       const startedAt = Date.now();
 
-      app.log.info({ jobId, sessionId }, "Distance worker: picked up job");
+      return tracer.startActiveSpan("bullmq.process_job", async (span) => {
+        const { sessionId } = job.data;
+        const jobId = job.id ?? sessionId;
 
-      try {
-        await sessionSummaryService.calculateAndSaveSystem(app, sessionId);
+        try {
+          // ─── Span Attributes ────────────────────────────────────────────────
 
-        const executionTimeMs = Date.now() - startedAt;
-        metrics.recordRecalculationTime(executionTimeMs);
-        metrics.incrementRecalculations();
+          span.setAttribute("worker.name", "distance-worker");
+          span.setAttribute("queue.name", "distance-engine");
+          span.setAttribute("job.id", jobId);
+          span.setAttribute("job.name", job.name ?? "distance-engine");
+          span.setAttribute("job.attempts", job.attemptsMade);
+          span.setAttribute("job.timestamp", job.timestamp);
+          span.setAttribute("session.id", sessionId);
 
-        app.log.info(
-          { jobId, sessionId, executionTimeMs },
-          "Distance worker: job completed successfully",
-        );
-      } catch (error: unknown) {
-        const executionTimeMs = Date.now() - startedAt;
-        const message = error instanceof Error ? error.message : String(error);
+          app.log.info({ jobId, sessionId }, "Distance worker: picked up job");
 
-        app.log.error(
-          { jobId, sessionId, executionTimeMs, error: message },
-          "Distance worker: job failed",
-        );
+          await sessionSummaryService.calculateAndSaveSystem(app, sessionId);
 
-        // Re-throw so BullMQ records the failure and applies backoff/retry
-        throw error;
-      }
+          const executionTimeMs = Date.now() - startedAt;
+
+          metrics.recordRecalculationTime(executionTimeMs);
+          metrics.incrementRecalculations();
+
+          span.setAttribute("execution_time_ms", executionTimeMs);
+          span.setStatus({ code: SpanStatusCode.OK });
+
+          app.log.info(
+            { jobId, sessionId, executionTimeMs },
+            "Distance worker: job completed successfully",
+          );
+
+          return;
+        } catch (error: unknown) {
+          const executionTimeMs = Date.now() - startedAt;
+          const message = error instanceof Error ? error.message : String(error);
+
+          if (error instanceof Error) {
+            span.recordException(error);
+          }
+
+          span.setStatus({ code: SpanStatusCode.ERROR });
+
+          app.log.error(
+            { jobId: job.id, sessionId, executionTimeMs, error: message },
+            "Distance worker: job failed",
+          );
+
+          throw error;
+        } finally {
+          span.end();
+        }
+      });
     },
     { connection: redisConnectionOptions, concurrency: 1 },
   );
@@ -94,32 +105,19 @@ export function startDistanceWorker(app: FastifyInstance): Worker | null {
 
 // ─── Crash Recovery ───────────────────────────────────────────────────────────
 
-/**
- * Phase 10: Crash recovery re-enqueue using durable BullMQ jobs.
- *
- * Called AFTER app.listen() resolves in server.ts — never inside buildApp() —
- * so the recovery scan never blocks the server from accepting traffic.
- *
- * Orphaned sessions (checked-out but missing or stale summary) are re-enqueued
- * into Redis in small batches using setImmediate so the event loop is not
- * saturated during the recovery window.
- *
- * Collision safety: enqueueDistanceJob() uses jobId = sessionId — BullMQ
- * silently ignores duplicates already waiting in the queue.
- */
 export async function performStartupRecovery(
   fastifyApp: FastifyInstance,
 ): Promise<void> {
   try {
     fastifyApp.log.info("Phase 10: starting crash recovery scan");
 
-    // Dynamic import avoids a circular-dependency chain at module load time
     const { attendanceRepository } =
       await import("../modules/attendance/attendance.repository.js");
 
-    const orphans = await attendanceRepository.findSessionsNeedingRecalculation(
-      fastifyApp.log,
-    );
+    const orphans =
+      await attendanceRepository.findSessionsNeedingRecalculation(
+        fastifyApp.log,
+      );
 
     if (orphans.length === 0) {
       fastifyApp.log.info(
@@ -140,8 +138,6 @@ export async function performStartupRecovery(
       const end = Math.min(batchStart + RECOVERY_BATCH_SIZE, orphans.length);
       const batch = orphans.slice(batchStart, end);
 
-      // Fire-and-forget async enqueue inside synchronous setImmediate callback.
-      // Errors are caught and logged individually to avoid blocking the batch loop.
       for (const session of batch) {
         enqueueDistanceJob(session.id)
           .then(() => {
@@ -149,6 +145,7 @@ export async function performStartupRecovery(
           })
           .catch((err: unknown) => {
             const message = err instanceof Error ? err.message : String(err);
+
             fastifyApp.log.warn(
               { sessionId: session.id, error: message },
               "Phase 10: failed to enqueue orphaned session during recovery",
@@ -165,6 +162,7 @@ export async function performStartupRecovery(
           { orphanCount: orphans.length, totalEnqueued },
           "Phase 10: crash recovery re-enqueue complete",
         );
+
         metrics.incrementRecalculations();
       }
     };
@@ -172,6 +170,7 @@ export async function performStartupRecovery(
     setImmediate(enqueueBatch);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+
     fastifyApp.log.error(
       { error: message },
       "Phase 10: crash recovery scan failed — some sessions may need manual recalculation",
