@@ -16,10 +16,13 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   scrape_timeout: 10s
+rule_files:
+  - alerts.yml
 
 scrape_configs:
   # ── Fastify Backend (Blue) ──────────────────────────────────────────────────
   - job_name: "fieldtrack-backend-blue"
+    scrape_protocols: [OpenMetricsText1.0.0, PrometheusText0.0.4]
     metrics_path: /metrics
     scrape_interval: 15s
     static_configs:
@@ -32,6 +35,7 @@ scrape_configs:
 
   # ── Fastify Backend (Green) ─────────────────────────────────────────────────
   - job_name: "fieldtrack-backend-green"
+    scrape_protocols: [OpenMetricsText1.0.0, PrometheusText0.0.4]
     metrics_path: /metrics
     scrape_interval: 15s
     static_configs:

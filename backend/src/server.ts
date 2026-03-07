@@ -1,3 +1,4 @@
+import "./tracing.js";
 import { env } from "./config/env.js";
 import { buildApp } from "./app.js";
 import { performStartupRecovery } from "./workers/distance.worker.js";
@@ -15,7 +16,7 @@ async function start(): Promise<void> {
   };
 
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
-  process.on("SIGINT",  () => void shutdown("SIGINT"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 
   try {
     await app.listen({ port: env.PORT, host: "0.0.0.0" });

@@ -1,6 +1,7 @@
 import fp from "fastify-plugin";
 import type { FastifyPluginAsync } from "fastify";
 import client from "prom-client";
+import { trace, context } from "@opentelemetry/api";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -24,6 +25,7 @@ const httpRequestDuration = new client.Histogram({
   labelNames: ["method", "route", "status_code"],
   buckets: [0.01, 0.05, 0.1, 0.2, 0.5, 1, 2, 5],
   registers: [register],
+  enableExemplars: true,
 });
 
 const httpRequestsInFlight = new client.Gauge({
@@ -63,9 +65,18 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
       .labels(request.method, route, String(reply.statusCode))
       .inc();
 
-    httpRequestDuration
-      .labels(request.method, route, String(reply.statusCode))
-      .observe(duration);
+    // Attach the active trace ID as an exemplar so Grafana can jump from
+    // this metric data point straight to the corresponding Tempo trace.
+    const activeSpan = trace.getSpan(context.active());
+    const traceId = activeSpan?.spanContext().traceId;
+
+    httpRequestDuration.observe({
+      labels: { method: request.method, route, status_code: String(reply.statusCode) },
+      value: duration,
+      exemplarLabels: traceId !== undefined
+        ? ({ trace_id: traceId } as Record<string, string>)
+        : undefined,
+    });
 
     httpRequestsInFlight.dec();
   });
