@@ -19,10 +19,19 @@ function parseRedisUrl(redisUrl: string): {
   enableReadyCheck: false;
   tls?: Record<string, unknown>;
 } {
+  // Guard: new URL() will silently mis-parse bare "host:port" strings
+  // (hostname comes out empty, fallback was 127.0.0.1 — deadly in Docker).
+  if (!redisUrl.startsWith("redis://") && !redisUrl.startsWith("rediss://")) {
+    throw new Error(
+      `REDIS_URL must start with redis:// or rediss://. Got: "${redisUrl}". ` +
+      `Example: redis://redis:6379`,
+    );
+  }
+
   const u = new URL(redisUrl);
 
   return {
-    host: u.hostname || "127.0.0.1",
+    host: u.hostname,
     port: u.port ? parseInt(u.port, 10) : 6379,
     password: u.password || undefined,
     username: u.username || undefined,
