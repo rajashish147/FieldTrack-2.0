@@ -60,6 +60,7 @@ services:
       - "--storage.tsdb.retention.size=5GB"
       - "--web.enable-lifecycle"
       - "--enable-feature=exemplar-storage"
+      - "--web.enable-remote-write-receiver"
     networks:
       - fieldtrack_network
     healthcheck:
