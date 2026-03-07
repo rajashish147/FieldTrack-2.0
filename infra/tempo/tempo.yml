@@ -26,6 +26,7 @@ storage:
 metrics_generator:
   storage:
     path: /var/tempo/generator
-  processor:
-    service_graphs:
-    span_metrics:
+
+  processors:
+    - service-graphs
+    - span-metrics
