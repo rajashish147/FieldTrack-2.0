@@ -4,6 +4,48 @@ Complete reference for all HTTP endpoints exposed by the backend.
 
 ---
 
+## Interactive Documentation
+
+**Phase 19: OpenAPI Integration**
+
+The API now provides interactive documentation via **Swagger UI** and a machine-readable **OpenAPI 3.0 specification**.
+
+### Accessing Documentation
+
+| Resource | URL | Description |
+|----------|-----|-------------|
+| **Swagger UI** | `/docs` | Interactive API explorer with request/response examples |
+| **OpenAPI Spec** | `/openapi.json` | JSON schema for API contract (OpenAPI 3.0) |
+
+### Using Swagger UI
+
+1. Navigate to `http://localhost:4000/docs` (development) or `https://api.fieldtrack.app/docs` (production)
+2. Click **Authorize** button in the top right
+3. Enter your JWT token in the format: `Bearer <your-jwt-token>`
+4. Click **Authorize** to save
+5. All subsequent requests will include the authentication header
+
+### Example cURL Command
+
+```bash
+curl -X POST http://localhost:4000/attendance/check-in \
+  -H "Authorization: Bearer <your-jwt-token>" \
+  -H "Content-Type: application/json"
+```
+
+### API Tags
+
+Endpoints are organized by the following tags:
+
+- **health** — Health check and system status endpoints
+- **attendance** — Attendance tracking and session management
+- **locations** — Location tracking and route calculation
+- **expenses** — Expense reporting and management
+- **analytics** — Business analytics and reporting (ADMIN only)
+- **admin** — Administrative operations (ADMIN role required)
+
+---
+
 ## Authentication
 
 All endpoints except the public health/metrics routes require a Supabase-issued JWT passed as a Bearer token.
