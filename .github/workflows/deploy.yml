@@ -1,7 +1,10 @@
-name: FieldTrack Backend Deploy
+name: FieldTrack Backend CI/CD
 
 on:
   push:
+    branches:
+      - master
+  pull_request:
     branches:
       - master
   workflow_dispatch:
@@ -38,6 +41,8 @@ jobs:
     name: Build and Deploy
     runs-on: ubuntu-latest
     needs: test
+    # Only run on push to master, not on PRs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
 
     permissions:
       contents: read
@@ -50,6 +55,9 @@ jobs:
       - name: Extract commit SHA
         run: echo "SHA_SHORT=${GITHUB_SHA::7}" >> $GITHUB_ENV
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -57,17 +65,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Docker images
-        run: |
-          docker build \
-            -t ghcr.io/rajashish147/fieldtrack-backend:${{ env.SHA_SHORT }} \
-            -t ghcr.io/rajashish147/fieldtrack-backend:latest \
-            ./backend
-
-      - name: Push Docker images
-        run: |
-          docker push ghcr.io/rajashish147/fieldtrack-backend:${{ env.SHA_SHORT }}
-          docker push ghcr.io/rajashish147/fieldtrack-backend:latest
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ghcr.io/rajashish147/fieldtrack-backend:${{ env.SHA_SHORT }}
+            ghcr.io/rajashish147/fieldtrack-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.0.3
