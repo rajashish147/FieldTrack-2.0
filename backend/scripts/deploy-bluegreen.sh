@@ -74,7 +74,7 @@ echo "[4/7] Waiting for health check..."
 
 ATTEMPT=0
 
-until curl -sf "http://127.0.0.1:$INACTIVE_PORT/health" | grep -q "ok"; do
+until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/health" >/dev/null; do
     ATTEMPT=$((ATTEMPT+1))
 
     if [ "$ATTEMPT" -ge "$MAX_HEALTH_ATTEMPTS" ]; then
