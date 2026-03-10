@@ -1,6 +1,7 @@
 import type { FastifyRequest } from "fastify";
 import { analyticsRepository } from "./analytics.repository.js";
-import { BadRequestError, NotFoundError } from "../../utils/errors.js";
+import { attendanceRepository } from "../attendance/attendance.repository.js";
+import { BadRequestError } from "../../utils/errors.js";
 import type {
   OrgSummaryData,
   UserSummaryData,
@@ -134,33 +135,67 @@ export const analyticsService = {
   /**
    * Per-user summary for a given date range.
    *
-   * Validates that the userId belongs to this organization before running
-   * the aggregation queries (prevents returning zeros that could be confused
-   * with legitimate zero-activity data for a foreign userId).
+   * Identity mapping: userIdParam is users.id (JWT sub) — must be resolved to
+   * employees.id before querying employee-scoped columns.
+   *
+   * Process:
+   *  1. Resolve users.id → employees.id (one-time lookup)
+   *  2. Query sessions/expenses with resolved employees.id
+   *  3. Aggregate within the date range
+   *
+   * Returns empty analytics response if the user has no employee record or no sessions.
+   * (Admins may query analytics for users who have no employee profile, were admins,
+   * or were deleted — returning 404 would be misleading.)
    */
   async getUserSummary(
     request: FastifyRequest,
-    userId: string,
+    userIdParam: string,
     from: string | undefined,
     to: string | undefined,
   ): Promise<UserSummaryData> {
     validateDateRange(from, to);
 
-    // Validate userId exists in this org — throws NotFoundError if not
+    // CRITICAL: Resolve users.id → employees.id (one lookup, reused for all queries)
+    const employeeId = await attendanceRepository.findEmployeeIdByUserId(
+      request,
+      userIdParam,
+    );
+
+    if (!employeeId) {
+      // User has no employee record (e.g., admin-only user) — return empty analytics
+      return {
+        sessionsCount: 0,
+        totalDistanceKm: 0,
+        totalDurationSeconds: 0,
+        totalExpenses: 0,
+        approvedExpenseAmount: 0,
+        averageDistancePerSession: 0,
+        averageSessionDurationSeconds: 0,
+      };
+    }
+
+    // Validate employeeId has sessions in this org — return empty if not
     const userExistsInOrg = await analyticsRepository.checkUserHasSessionsInOrg(
       request,
-      userId,
+      employeeId,  // ← Now passing employees.id
     );
     if (!userExistsInOrg) {
-      throw new NotFoundError(
-        "No sessions found for this user in your organization",
-      );
+      // Employee has no sessions — return empty analytics
+      return {
+        sessionsCount: 0,
+        totalDistanceKm: 0,
+        totalDurationSeconds: 0,
+        totalExpenses: 0,
+        approvedExpenseAmount: 0,
+        averageDistancePerSession: 0,
+        averageSessionDurationSeconds: 0,
+      };
     }
 
     // Resolve this user's sessions in the date range
     const sessions = await analyticsRepository.getSessionsForUser(
       request,
-      userId,
+      employeeId,  // ← Now passing employees.id
       from,
       to,
     );
@@ -185,7 +220,7 @@ export const analyticsService = {
     // Expense aggregation for this user in the same date range
     const expenseRows = await analyticsRepository.getExpensesForUser(
       request,
-      userId,
+      employeeId,  // ← Now passing employees.id
       from,
       to,
     );
