@@ -237,8 +237,9 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
           },
         },
       },
+      security: [{ BearerAuth: [] }],
       externalDocs: {
-        url: "https://github.com/yourorg/fieldtrack",
+        url: "https://github.com/rajashish147/FieldTrack-2.0",
         description: "Find more info here",
       },
     },
