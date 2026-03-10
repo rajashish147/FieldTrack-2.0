@@ -4,14 +4,14 @@ Production-ready Fastify + TypeScript backend for FieldTrack 2.0 SaaS platform.
 
 ## Tech Stack
 
-- **Runtime**: Node.js 20+
+- **Runtime**: Node.js 24+
 - **Language**: TypeScript 5.9 (strict mode, ESM)
 - **Framework**: Fastify 5
 - **Auth**: @fastify/jwt (Supabase JWT)
 - **Database**: PostgreSQL via Supabase
 - **Job Queue**: BullMQ + Redis
-- **Validation**: Zod 4
-- **Observability**: OpenTelemetry, Prometheus, Grafana
+- **Validation**: Zod 4 (`fastify-type-provider-zod`)
+- **Observability**: OpenTelemetry 2.x, Prometheus, Grafana
 - **Security**: @fastify/helmet, @fastify/cors, @fastify/rate-limit, @fastify/compress
 
 ## Quick Start
@@ -61,7 +61,12 @@ src/
 ├── app.ts             # Fastify app factory
 ├── tracing.ts         # OpenTelemetry tracing setup
 ├── config/            # Environment & logger config
-├── plugins/           # Fastify plugins (JWT, metrics, etc.)
+├── plugins/           # Fastify plugins
+│   ├── zod.plugin.ts  # Shared Zod compiler registration (single source of truth)
+│   ├── openapi.plugin.ts  # Swagger / OpenAPI documentation
+│   ├── jwt.ts         # JWT plugin
+│   ├── prometheus.ts  # Prometheus metrics
+│   └── security/      # helmet, cors, rate-limit, abuse-logging
 ├── routes/            # Route modules
 ├── middleware/        # Auth & request middleware
 ├── modules/           # Business domain modules

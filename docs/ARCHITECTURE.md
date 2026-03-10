@@ -140,7 +140,8 @@
   - JWT authentication via Supabase
   - Multi-tenant isolation with organization context
   - Rate limiting and security middleware
-  - Zod schema validation
+  - Zod schema validation via `fastify-type-provider-zod` (`zod.plugin.ts` is the single registration point)
+  - `preValidation` hook for auth — ensures 401/403 always fires before body/querystring schema validation
   - OpenTelemetry instrumentation
 
 ### Data Layer
@@ -154,7 +155,8 @@
 - **Distance Worker**: Asynchronous GPS processing
   - Haversine distance calculations
   - Session travel metrics
-  - Configurable concurrency
+  - Configurable concurrency (`WORKER_CONCURRENCY` env var)
+  - Job retention limits: 1 000 completed, 5 000 failed (prevents Redis memory growth)
 
 ### Observability Layer
 - **Prometheus**: Metrics collection and alerting
@@ -175,9 +177,9 @@ Mobile App
     ▼
 Fastify API
     │
-    ├─▶ Auth Middleware (verify JWT)
+    ├─▶ preValidation: Auth Middleware (verify JWT)   ← runs first
     │
-    ├─▶ Validate Request (Zod)
+    ├─▶ Validate Request Body (Zod)                  ← runs after auth
     │
     ├─▶ Create Session (Supabase)
     │
@@ -196,12 +198,14 @@ Fastify API
 Mobile App
     │
     │ POST /locations
-    │ { latitude, longitude, timestamp }
+    │ { session_id, latitude, longitude, accuracy, recorded_at }
     │
     ▼
 Fastify API
     │
-    ├─▶ Auth Middleware
+    ├─▶ preValidation: Auth Middleware        ← runs first
+    │
+    ├─▶ Validate Body (Zod createLocationSchema)
     │
     ├─▶ Validate Active Session
     │
@@ -289,7 +293,7 @@ Fastify API
 │                                                                             │
 │  GitHub Push → Test → Build Docker → Push GHCR → Deploy Blue-Green        │
 │                                                                             │
-│  • Automated testing (124 tests)                                           │
+│  • Automated testing (125 tests)                                           │
 │  • TypeScript compilation check                                            │
 │  • Docker image build with caching                                         │
 │  • Push to GitHub Container Registry                                       │
@@ -344,10 +348,10 @@ Fastify API
 ## Technology Stack
 
 ### Backend
-- **Runtime**: Node.js 20+
+- **Runtime**: Node.js 24+
 - **Language**: TypeScript 5.9 (strict mode, ESM)
 - **Framework**: Fastify 5
-- **Validation**: Zod 4
+- **Validation**: Zod 4 (`fastify-type-provider-zod`)
 - **Authentication**: @fastify/jwt
 - **Job Queue**: BullMQ + Redis
 
@@ -365,16 +369,16 @@ Fastify API
 ### Observability
 - **Metrics**: Prometheus + prom-client
 - **Logs**: Pino + Loki
-- **Traces**: OpenTelemetry + Tempo
+- **Traces**: OpenTelemetry 2.x + Tempo
 - **Dashboards**: Grafana
 
 ### DevOps
-- **Containerization**: Docker
+- **Containerization**: Docker (node:24-alpine)
 - **Registry**: GitHub Container Registry (GHCR)
 - **CI/CD**: GitHub Actions
 - **Deployment**: Blue-Green with rollback
 - **Reverse Proxy**: Nginx
-- **Testing**: Vitest (124 tests)
+- **Testing**: Vitest (125 tests)
 
 ## Scalability Considerations
 

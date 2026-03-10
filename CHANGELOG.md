@@ -4,6 +4,52 @@ All significant changes to FieldTrack 2.0 are documented here by development pha
 
 ---
 
+## [Post-Phase-20] — Reliability Audit, Node 24 Upgrade & OTel 2.x — 2026
+
+### Zod Compiler Reliability Fix
+- Created `src/plugins/zod.plugin.ts` — single exported `registerZod(app)` helper that calls `setValidatorCompiler` + `setSerializerCompiler`; this is now the **only** place these are set, eliminating the previous drift between production and test environments
+- Updated `src/app.ts` to call `registerZod(app)` at the root level **before** any plugins or routes are registered
+- Removed the duplicate `setValidatorCompiler` / `setSerializerCompiler` calls that were previously inside `openapi.plugin.ts`
+- Updated `tests/setup/test-server.ts` to call `registerZod(app)` from the shared plugin instead of inline copies
+
+### Fastify Lifecycle Fix — auth before validation
+- Moved `[authenticate, requireRole(...)]` from `preHandler` to `preValidation` on all routes that carry a Zod `body` or `querystring` schema
+  - `POST /expenses`, `PATCH /admin/expenses/:id`, `GET /expenses/my`, `GET /admin/expenses`
+  - `GET /attendance/my-sessions`, `GET /attendance/org-sessions`
+  - `POST /locations`, `POST /locations/batch`, `GET /locations/my-route`
+  - All three analytics admin endpoints
+- This ensures `401 Unauthorized` / `403 Forbidden` always fires first, before Zod ever runs, matching the expected HTTP semantics
+
+### Error Handler — 4xx passthrough
+- Updated `setErrorHandler` in both `src/app.ts` and `tests/setup/test-server.ts` to pass through Fastify's built-in `4xx` errors (validation errors, rate-limit 429, etc.) instead of collapsing them to 500
+
+### Location Route Schemas
+- Added missing `body: createLocationSchema` to `POST /locations`
+- Added missing `body: createLocationBatchSchema` to `POST /locations/batch`
+- Added missing `querystring: sessionQuerySchema` to `GET /locations/my-route`
+- These schemas were previously only applied inside the controller; moving them to the route definition makes them visible to OpenAPI/Swagger generation
+
+### BullMQ Job Retention
+- Added `removeOnComplete: { count: 1000 }` and `removeOnFail: { count: 5000 }` to the distance worker constructor
+- Prevents unbounded Redis memory growth from accumulating stale job records
+
+### Node.js 24 Upgrade
+- Bumped `Dockerfile` from `node:20-alpine` → `node:24-alpine` (both builder and production stages)
+- Added `"engines": { "node": ">=24.0.0" }` to `package.json`
+
+### OpenTelemetry 2.x Upgrade
+- Upgraded `@opentelemetry/auto-instrumentations-node`: `^0.55.0` → `^0.71.0`
+- Upgraded `@opentelemetry/exporter-trace-otlp-http`: `^0.57.0` → `^0.213.0`
+- Upgraded `@opentelemetry/sdk-node`: `^0.57.0` → `^0.213.0`
+- Added `@opentelemetry/resources@^2.0.0` and `@opentelemetry/sdk-trace-base@^2.0.0` as explicit dependencies (previously transitive)
+- Updated `src/tracing.ts`: replaced `new Resource({ ... })` (class, removed in v2) with `resourceFromAttributes({ ... })` factory; replaced deprecated `SEMRESATTRS_*` constants (removed in `semantic-conventions@1.40`) with stable string literals (`"service.name"`, `"service.version"`, `"deployment.environment"`)
+
+### Test Suite
+- Test count increased from 124 → **125** passing tests
+- All existing integration and unit tests continue to pass after the lifecycle and compiler changes
+
+---
+
 ## [Post-Phase-18] — CI/CD Upgrade & Multi-Version Rollback — 2026
 
 ### CI/CD Pipeline (commits `b61cc19`, `29cb948`)
