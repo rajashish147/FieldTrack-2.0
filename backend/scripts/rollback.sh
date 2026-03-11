@@ -4,6 +4,12 @@ set -euo pipefail
 DEPLOY_HISTORY="/home/ashish/FieldTrack-2.0/backend/.deploy_history"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+AUTO_MODE=false
+
+if [[ "${1:-}" == "--auto" ]]; then
+  AUTO_MODE=true
+fi
+
 echo "========================================="
 echo "FieldTrack Rollback System"
 echo "========================================="
@@ -12,67 +18,43 @@ echo "========================================="
 if [ ! -f "$DEPLOY_HISTORY" ]; then
     echo "ERROR: No deployment history found."
     echo "File not found: $DEPLOY_HISTORY"
-    echo ""
-    echo "This means no successful deployment has been recorded yet."
-    echo "Cannot rollback without a previous deployment."
     exit 1
 fi
 
-# Read deployment history
 mapfile -t HISTORY < "$DEPLOY_HISTORY"
 
 if [ ${#HISTORY[@]} -lt 2 ]; then
-    echo "ERROR: Insufficient deployment history."
-    echo "Current deployment: ${HISTORY[0]:-none}"
-    echo ""
-    echo "Need at least 2 deployments to rollback."
-    echo "Cannot rollback - this is the first or only deployment."
+    echo "ERROR: Need at least two deployments to rollback."
     exit 1
 fi
 
-# Current (line 1) and previous (line 2)
 CURRENT_SHA="${HISTORY[0]}"
 PREVIOUS_SHA="${HISTORY[1]}"
 
 echo "Current deployment : $CURRENT_SHA"
-echo "Previous deployment: $PREVIOUS_SHA"
+echo "Rollback target    : $PREVIOUS_SHA"
 echo ""
 
-# Show additional history if available
-if [ ${#HISTORY[@]} -gt 2 ]; then
-    echo "Deployment history:"
-    for i in "${!HISTORY[@]}"; do
-        if [ $i -eq 0 ]; then
-            echo "  $((i+1)). ${HISTORY[$i]} (current)"
-        elif [ $i -eq 1 ]; then
-            echo "  $((i+1)). ${HISTORY[$i]} ← rollback target"
-        else
-            echo "  $((i+1)). ${HISTORY[$i]}"
-        fi
-    done
-    echo ""
-fi
-echo "⚠️  WARNING: This will redeploy the previous version."
-echo "Current production will be replaced with: $PREVIOUS_SHA"
-echo ""
-read -p "Continue with rollback? (yes/no): " -r
-echo
+if [ "$AUTO_MODE" = false ]; then
+  echo "⚠️  WARNING: This will replace the current deployment."
+  read -p "Continue with rollback? (yes/no): " -r
 
-if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
-    echo "Rollback cancelled."
-    exit 0
+  if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+      echo "Rollback cancelled."
+      exit 0
+  fi
+else
+  echo "Auto rollback mode enabled (CI)."
 fi
 
 echo ""
-echo "Starting rollback to image: $PREVIOUS_SHA"
-echo "========================================="
+echo "Starting rollback to: $PREVIOUS_SHA"
 echo ""
 
-# Execute the blue-green deployment script with the previous SHA
 "$SCRIPT_DIR/deploy-bluegreen.sh" "$PREVIOUS_SHA"
 
 echo ""
 echo "========================================="
-echo "Rollback completed successfully."
-echo "Production is now running: $PREVIOUS_SHA"
+echo "Rollback completed successfully"
+echo "Production now running: $PREVIOUS_SHA"
 echo "========================================="
