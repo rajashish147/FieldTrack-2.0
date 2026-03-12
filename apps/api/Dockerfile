@@ -35,7 +35,7 @@ COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 COPY packages/types/package.json ./packages/types/
 
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts
 
 COPY --from=builder /workspace/apps/api/dist ./dist
 COPY --from=builder /workspace/packages/types/dist ./packages/types/dist
