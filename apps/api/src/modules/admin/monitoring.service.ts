@@ -13,6 +13,12 @@ export type MonitoringPaginationQuery = z.infer<typeof monitoringPaginationSchem
 
 export const monitoringService = {
   async startMonitoring(request: FastifyRequest): Promise<AdminSession> {
+    // Prevent duplicate clicks - return existing active session if any
+    const active = await monitoringRepository.getActiveSession(request);
+    if (active) {
+      return active;
+    }
+
     const session = await monitoringRepository.startSession(request);
 
     request.log.info(

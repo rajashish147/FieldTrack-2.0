@@ -9,6 +9,27 @@ const MONITORING_COLS = "id, admin_id, organization_id, started_at, ended_at, cr
 
 export const monitoringRepository = {
   /**
+   * Get the active monitoring session for the admin, if any.
+   */
+  async getActiveSession(request: FastifyRequest): Promise<AdminSession | null> {
+    const { data, error } = await orgTable(request, "admin_sessions")
+      .select(MONITORING_COLS)
+      .eq("admin_id", request.user.sub)
+      .is("ended_at", null)
+      .single();
+
+    if (error) {
+      // PGRST116 means no rows found, which is expected
+      if (error.code === "PGRST116") {
+        return null;
+      }
+      throw new Error(`Failed to get active session: ${error.message}`);
+    }
+
+    return data as AdminSession;
+  },
+
+  /**
    * Insert a new admin monitoring session with ended_at = null.
    */
   async startSession(request: FastifyRequest): Promise<AdminSession> {
