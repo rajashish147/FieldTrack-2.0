@@ -1,9 +1,15 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiGetPaginated, apiPatch } from "@/lib/api/client";
+import { apiGetPaginated, apiPatch, apiPost } from "@/lib/api/client";
 import { API } from "@/lib/api/endpoints";
 import { Expense, PaginatedResponse, ExpenseStatus } from "@/types";
+
+export interface CreateExpenseBody {
+  amount: number;
+  description: string;
+  receipt_url?: string;
+}
 
 export function useMyExpenses(page: number, limit: number) {
   return useQuery<PaginatedResponse<Expense>>({
@@ -27,6 +33,17 @@ export function useOrgExpenses(page: number, limit: number) {
   });
 }
 
+export function useCreateExpense() {
+  const client = useQueryClient();
+
+  return useMutation<Expense, Error, CreateExpenseBody>({
+    mutationFn: (body) => apiPost<Expense>(API.createExpense, body),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["expenses"] });
+    },
+  });
+}
+
 export function useUpdateExpenseStatus() {
   const client = useQueryClient();
 
@@ -38,3 +55,4 @@ export function useUpdateExpenseStatus() {
     },
   });
 }
+

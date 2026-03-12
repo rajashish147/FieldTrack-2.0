@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { OrgSummaryData } from "@/types";
-import { formatDistance, formatDuration } from "@/lib/utils";
+import { formatDistance, formatDuration, formatCurrency } from "@/lib/utils";
 import { Activity, MapPin, Clock, Users, DollarSign, TrendingUp } from "lucide-react";
 
 interface SummaryCardsProps {
@@ -58,14 +58,14 @@ export function SummaryCards({ summary }: SummaryCardsProps) {
       />
       <StatCard
         title="Approved Expenses"
-        value={`$${summary.approvedExpenseAmount.toFixed(2)}`}
+        value={formatCurrency(summary.approvedExpenseAmount)}
         icon={<DollarSign className="h-4 w-4" />}
       />
       <StatCard
         title="Total Expenses"
         value={summary.totalExpenses.toLocaleString()}
         icon={<TrendingUp className="h-4 w-4" />}
-        description={`$${summary.rejectedExpenseAmount.toFixed(2)} rejected`}
+        description={`${formatCurrency(summary.rejectedExpenseAmount)} rejected`}
       />
     </div>
   );

@@ -99,6 +99,18 @@ export async function apiGetPaginated<T>(
   return handlePaginatedResponse<T>(response);
 }
 
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const headers = await getAuthHeaders();
+
+  const response = await fetch(`${env.NEXT_PUBLIC_API_URL}${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  return handleResponse<T>(response);
+}
+
 export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   const headers = await getAuthHeaders();
 

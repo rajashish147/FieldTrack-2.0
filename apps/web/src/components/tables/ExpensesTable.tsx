@@ -4,7 +4,7 @@ import { DataTable, type ColumnDef } from "@/components/tables/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Expense, ExpenseStatus } from "@/types";
-import { formatDate } from "@/lib/utils";
+import { formatDate, formatCurrency } from "@/lib/utils";
 import { Receipt } from "lucide-react";
 
 interface ExpensesTableProps {
@@ -16,6 +16,7 @@ interface ExpensesTableProps {
   page?: number;
   hasMore?: boolean;
   onPageChange?: (page: number) => void;
+  showEmployee?: boolean;
 }
 
 function StatusBadge({ status }: { status: ExpenseStatus }) {
@@ -24,12 +25,29 @@ function StatusBadge({ status }: { status: ExpenseStatus }) {
   return <Badge variant="warning">Pending</Badge>;
 }
 
+const employeeColumn: ColumnDef<Expense> = {
+  key: "employee",
+  title: "Employee",
+  render: (e) => (
+    <div className="flex flex-col">
+      <span className="font-medium text-sm">
+        {e.employee_name ?? "—"}
+      </span>
+      {e.employee_code && (
+        <span className="text-xs text-muted-foreground">{e.employee_code}</span>
+      )}
+    </div>
+  ),
+};
+
 function buildColumns(
   showActions: boolean,
+  showEmployee: boolean,
   onApprove?: (id: string) => void,
   onReject?: (id: string) => void
 ): ColumnDef<Expense>[] {
   const base: ColumnDef<Expense>[] = [
+    ...(showEmployee ? [employeeColumn] : []),
     {
       key: "created_at",
       title: "Date",
@@ -46,7 +64,7 @@ function buildColumns(
       key: "amount",
       title: "Amount",
       sortable: true,
-      render: (e) => `$${e.amount.toFixed(2)}`,
+      render: (e) => formatCurrency(e.amount),
     },
     {
       key: "status",
@@ -95,8 +113,9 @@ export function ExpensesTable({
   page,
   hasMore,
   onPageChange,
+  showEmployee = false,
 }: ExpensesTableProps) {
-  const columns = buildColumns(showActions, onApprove, onReject);
+  const columns = buildColumns(showActions, showEmployee, onApprove, onReject);
 
   return (
     <DataTable
@@ -113,3 +132,4 @@ export function ExpensesTable({
     />
   );
 }
+

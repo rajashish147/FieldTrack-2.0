@@ -9,6 +9,7 @@ import {
   BarChart3,
   Users,
   ClipboardList,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -60,6 +61,11 @@ export function SidebarNav() {
             href: "/admin/analytics",
             label: "Analytics",
             icon: <BarChart3 className="h-5 w-5" />,
+          },
+          {
+            href: "/admin/monitoring",
+            label: "Monitoring",
+            icon: <Activity className="h-5 w-5" />,
           },
         ]
       : []),

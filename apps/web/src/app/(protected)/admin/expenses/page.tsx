@@ -9,19 +9,19 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import { ExpenseStatus } from "@/types";
+import { Expense, ExpenseStatus } from "@/types";
+import { formatCurrency, formatDate } from "@/lib/utils";
 
 const PAGE_LIMIT = 20;
 
 interface PendingAction {
-  id: string;
+  expense: Expense;
   status: ExpenseStatus;
 }
 
@@ -52,7 +52,7 @@ export default function AdminExpensesPage() {
     if (!pendingAction) return;
 
     updateStatus.mutate(
-      { id: pendingAction.id, status: pendingAction.status },
+      { id: pendingAction.expense.id, status: pendingAction.status },
       {
         onSuccess: () => {
           toast({
@@ -85,9 +85,16 @@ export default function AdminExpensesPage() {
       <ExpensesTable
         expenses={expenses}
         showActions={true}
+        showEmployee={true}
         isLoading={isLoading}
-        onApprove={(id) => setPendingAction({ id, status: "APPROVED" })}
-        onReject={(id) => setPendingAction({ id, status: "REJECTED" })}
+        onApprove={(id) => {
+          const expense = expenses.find((e) => e.id === id);
+          if (expense) setPendingAction({ expense, status: "APPROVED" });
+        }}
+        onReject={(id) => {
+          const expense = expenses.find((e) => e.id === id);
+          if (expense) setPendingAction({ expense, status: "REJECTED" });
+        }}
         page={page}
         hasMore={hasMore}
         onPageChange={setPage}
@@ -104,12 +111,56 @@ export default function AdminExpensesPage() {
             <DialogTitle>
               {pendingAction?.status === "APPROVED" ? "Approve" : "Reject"} Expense
             </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to{" "}
-              {pendingAction?.status === "APPROVED" ? "approve" : "reject"} this expense?
-              This action cannot be undone.
-            </DialogDescription>
           </DialogHeader>
+
+          {pendingAction && (
+            <div className="space-y-3 text-sm">
+              {(pendingAction.expense.employee_name || pendingAction.expense.employee_code) && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Employee</span>
+                  <span className="font-medium">
+                    {pendingAction.expense.employee_name}
+                    {pendingAction.expense.employee_code && (
+                      <span className="text-muted-foreground ml-1">
+                        ({pendingAction.expense.employee_code})
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Amount</span>
+                <span className="font-medium">{formatCurrency(pendingAction.expense.amount)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Submitted</span>
+                <span>{formatDate(pendingAction.expense.submitted_at)}</span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-muted-foreground">Description</span>
+                <span className="text-foreground">{pendingAction.expense.description}</span>
+              </div>
+              {pendingAction.expense.receipt_url && (
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Receipt</span>
+                  <a
+                    href={pendingAction.expense.receipt_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary underline underline-offset-2"
+                  >
+                    View receipt
+                  </a>
+                </div>
+              )}
+              <p className="text-muted-foreground pt-1 border-t">
+                Are you sure you want to{" "}
+                <strong>{pendingAction.status === "APPROVED" ? "approve" : "reject"}</strong> this
+                expense? This action cannot be undone.
+              </p>
+            </div>
+          )}
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setPendingAction(null)}>
               Cancel

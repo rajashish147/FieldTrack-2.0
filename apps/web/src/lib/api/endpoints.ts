@@ -14,8 +14,20 @@ export const API = {
   expenses: "/expenses/my",
   orgExpenses: "/admin/expenses",
   expenseStatus: (id: string) => `/admin/expenses/${id}`,
+  createExpense: "/expenses",
 
   // Analytics
   orgSummary: "/admin/org-summary",
   topPerformers: "/admin/top-performers",
+
+  // Personal dashboard
+  myDashboard: "/dashboard/my-summary",
+
+  // Admin monitoring
+  startMonitoring: "/admin/start-monitoring",
+  stopMonitoring: "/admin/stop-monitoring",
+  monitoringHistory: "/admin/monitoring-history",
+
+  // Employee management
+  createEmployee: "/admin/employees",
 } as const;

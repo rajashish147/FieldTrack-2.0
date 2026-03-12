@@ -5,19 +5,32 @@ export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
 }
 
+const IST = "Asia/Kolkata";
+
 export function formatDate(isoString: string): string {
-  return new Date(isoString).toLocaleDateString("en-US", {
+  return new Date(isoString).toLocaleDateString("en-IN", {
     year: "numeric",
     month: "short",
     day: "numeric",
+    timeZone: IST,
   });
 }
 
 export function formatTime(isoString: string): string {
-  return new Date(isoString).toLocaleTimeString("en-US", {
+  return new Date(isoString).toLocaleTimeString("en-IN", {
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: IST,
+    hour12: true,
   });
+}
+
+export function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 2,
+  }).format(amount);
 }
 
 export function formatDistance(km: number | null | undefined): string {
