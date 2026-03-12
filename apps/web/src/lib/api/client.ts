@@ -76,15 +76,8 @@ export async function apiGet<T>(
   params?: Record<string, string>
 ): Promise<T> {
   const headers = await getAuthHeaders();
-  const url = new URL(`${env.NEXT_PUBLIC_API_URL}${path}`);
-
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      url.searchParams.set(key, value);
-    });
-  }
-
-  const response = await fetch(url.toString(), {
+  const qs = params && Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : "";
+  const response = await fetch(`${env.NEXT_PUBLIC_API_URL}${path}${qs}`, {
     method: "GET",
     headers,
   });
@@ -97,15 +90,8 @@ export async function apiGetPaginated<T>(
   params?: Record<string, string>
 ): Promise<PaginatedResponse<T>> {
   const headers = await getAuthHeaders();
-  const url = new URL(`${env.NEXT_PUBLIC_API_URL}${path}`);
-
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      url.searchParams.set(key, value);
-    });
-  }
-
-  const response = await fetch(url.toString(), {
+  const qs = params && Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : "";
+  const response = await fetch(`${env.NEXT_PUBLIC_API_URL}${path}${qs}`, {
     method: "GET",
     headers,
   });

@@ -5,17 +5,15 @@ const nextConfig = {
     domains: [],
   },
   async rewrites() {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://fieldtrack.meowsician.tech";
-    // Only proxy locally - in production the real API URL is used directly
-    if (apiUrl.includes("localhost")) {
-      return [
-        {
-          source: "/fieldtrack-api/:path*",
-          destination: "https://fieldtrack.meowsician.tech/:path*",
-        },
-      ];
-    }
-    return [];
+    // Always expose a server-side proxy to avoid CORS issues on any deployment.
+    // Set NEXT_PUBLIC_API_URL=/api/proxy in Vercel (or any non-localhost deploy)
+    // so browser requests are same-origin and never trigger CORS preflight.
+    return [
+      {
+        source: "/api/proxy/:path*",
+        destination: "https://fieldtrack.meowsician.tech/:path*",
+      },
+    ];
   },
 };
 
