@@ -37,7 +37,7 @@ COPY packages/types/package.json ./packages/types/
 
 RUN npm ci --omit=dev
 
-COPY --from=builder /workspace/apps/api/dist ./dist
+COPY --from=builder /workspace/apps/api/dist ./apps/api/dist
 COPY --from=builder /workspace/packages/types/dist ./packages/types/dist
 
 # Phase 11: curl required for Docker HEALTHCHECK
@@ -53,4 +53,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 USER node
 
-CMD ["node", "dist/server.js"]
+CMD ["node", "apps/api/dist/server.js"]
