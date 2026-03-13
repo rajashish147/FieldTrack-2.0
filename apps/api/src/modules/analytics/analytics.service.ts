@@ -2,12 +2,17 @@ import type { FastifyRequest } from "fastify";
 import { analyticsRepository } from "./analytics.repository.js";
 import { attendanceRepository } from "../attendance/attendance.repository.js";
 import { BadRequestError } from "../../utils/errors.js";
+import { getCached, ANALYTICS_CACHE_TTL } from "../../utils/cache.js";
+import { orgTable } from "../../db/query.js";
 import type {
   OrgSummaryData,
   UserSummaryData,
   TopPerformerEntry,
   AnalyticsMetric,
+  LeaderboardMetric,
   MinimalExpenseRow,
+  SessionTrendEntry,
+  LeaderboardEntry,
 } from "./analytics.schema.js";
 
 // ─── Internal Aggregation Helpers ─────────────────────────────────────────────
@@ -82,40 +87,43 @@ export const analyticsService = {
   ): Promise<OrgSummaryData> {
     validateDateRange(from, to);
 
-    // Step 1: sessions in range — includes pre-computed distance and duration
-    const sessions = await analyticsRepository.getSessionsInRange(
-      request,
-      from,
-      to,
-    );
+    const cacheKey = `org:${request.organizationId}:analytics:summary:${from ?? "all"}:${to ?? "all"}`;
+    return getCached(cacheKey, ANALYTICS_CACHE_TTL, async () => {
+      // Step 1: sessions in range — includes pre-computed distance and duration
+      const sessions = await analyticsRepository.getSessionsInRange(
+        request,
+        from,
+        to,
+      );
 
-    const totalSessions = sessions.length;
-    let totalDistanceKm = 0;
-    let totalDurationSeconds = 0;
+      const totalSessions = sessions.length;
+      let totalDistanceKm = 0;
+      let totalDurationSeconds = 0;
 
-    for (const row of sessions) {
-      totalDistanceKm += row.total_distance_km ?? 0;
-      totalDurationSeconds += row.total_duration_seconds ?? 0;
-    }
+      for (const row of sessions) {
+        totalDistanceKm += row.total_distance_km ?? 0;
+        totalDurationSeconds += row.total_duration_seconds ?? 0;
+      }
 
-    // Step 2: expense aggregation and active employee count — independent, run in parallel
-    const [expenseRows, activeEmployeesCount] = await Promise.all([
-      analyticsRepository.getExpensesInRange(request, from, to),
-      analyticsRepository.getActiveEmployeesCount(request),
-    ]);
+      // Step 2: expense aggregation and active employee count — independent, run in parallel
+      const [expenseRows, activeEmployeesCount] = await Promise.all([
+        analyticsRepository.getExpensesInRange(request, from, to),
+        analyticsRepository.getActiveEmployeesCount(request),
+      ]);
 
-    const { totalExpenses, approvedExpenseAmount, rejectedExpenseAmount } =
-      aggregateExpenses(expenseRows);
+      const { totalExpenses, approvedExpenseAmount, rejectedExpenseAmount } =
+        aggregateExpenses(expenseRows);
 
-    return {
-      totalSessions,
-      totalDistanceKm: Math.round(totalDistanceKm * 100) / 100,
-      totalDurationSeconds,
-      totalExpenses,
-      approvedExpenseAmount,
-      rejectedExpenseAmount,
-      activeEmployeesCount,
-    };
+      return {
+        totalSessions,
+        totalDistanceKm: Math.round(totalDistanceKm * 100) / 100,
+        totalDurationSeconds,
+        totalExpenses,
+        approvedExpenseAmount,
+        rejectedExpenseAmount,
+        activeEmployeesCount,
+      };
+    });
   },
 
   /**
@@ -319,6 +327,119 @@ export const analyticsService = {
         employeeName: stats.employeeName,
         sessionsCount: stats.sessionsCount,
       };
+    });
+  },
+
+  /**
+   * Session trend — daily time-series from org_daily_metrics.
+   * Cached for 5 minutes per org + date range combination.
+   */
+  async getSessionTrend(
+    request: FastifyRequest,
+    from: string | undefined,
+    to: string | undefined,
+  ): Promise<SessionTrendEntry[]> {
+    validateDateRange(from, to);
+    const cacheKey = `org:${request.organizationId}:analytics:trend:${from ?? "all"}:${to ?? "all"}`;
+    return getCached(cacheKey, ANALYTICS_CACHE_TTL, () =>
+      analyticsRepository.getOrgDailyMetrics(request, from, to),
+    );
+  },
+
+  /**
+   * Leaderboard — ranked employees from employee_daily_metrics.
+   * Returns rank, employee info, and all metric values.
+   *
+   * Supports metrics: distance | duration | sessions | expenses.
+   * For the "expenses" metric, ranks employees by number of expense submissions
+   * in the date range rather than session-derived metrics.
+   *
+   * All results are cached for 5 minutes per org + metric + limit + date range.
+   */
+  async getLeaderboard(
+    request: FastifyRequest,
+    metric: LeaderboardMetric,
+    from: string | undefined,
+    to: string | undefined,
+    limit: number,
+  ): Promise<LeaderboardEntry[]> {
+    validateDateRange(from, to);
+
+    const cacheKey = `org:${request.organizationId}:analytics:leaderboard:${metric}:${limit}:${from ?? "all"}:${to ?? "all"}`;
+    return getCached(cacheKey, ANALYTICS_CACHE_TTL, async () => {
+      // All metrics — distance / duration / sessions / expenses — read from
+      // employee_daily_metrics so no GPS or expenses table scans are needed.
+      const aggregated = await analyticsRepository.getEmployeeMetricsAggregated(
+        request,
+        from,
+        to,
+      );
+
+      if (aggregated.length === 0) return [];
+
+      // Sort by the chosen metric descending.
+      // employee_id is used as a stable secondary key so that ties produce a
+      // consistent ranking across calls (deterministic, no flickering UI).
+      if (metric === "distance") {
+        aggregated.sort(
+          (a, b) =>
+            b.total_distance - a.total_distance ||
+            a.employee_id.localeCompare(b.employee_id),
+        );
+      } else if (metric === "duration") {
+        aggregated.sort(
+          (a, b) =>
+            b.total_duration - a.total_duration ||
+            a.employee_id.localeCompare(b.employee_id),
+        );
+      } else if (metric === "sessions") {
+        aggregated.sort(
+          (a, b) =>
+            b.total_sessions - a.total_sessions ||
+            a.employee_id.localeCompare(b.employee_id),
+        );
+      } else {
+        // metric === "expenses" — ORDER BY SUM(expenses_amount) DESC
+        aggregated.sort(
+          (a, b) =>
+            b.total_expenses_amount - a.total_expenses_amount ||
+            a.employee_id.localeCompare(b.employee_id),
+        );
+      }
+
+      const topN = aggregated.slice(0, limit);
+      const employeeIds = topN.map((a) => a.employee_id);
+
+      // Resolve employee names and codes in a single query
+      const { data: employees } = await orgTable(request, "employees")
+        .select("id, name, employee_code")
+        .in("id", employeeIds);
+
+      const empMap = new Map<string, { name: string; employee_code: string | null }>();
+      for (const emp of (employees ?? []) as Array<Record<string, unknown>>) {
+        empMap.set(emp.id as string, {
+          name: (emp.name as string) ?? "Unknown",
+          employee_code: (emp.employee_code as string) ?? null,
+        });
+      }
+
+      return topN.map((entry, idx) => {
+        const empInfo = empMap.get(entry.employee_id);
+        return {
+          rank: idx + 1,
+          employeeId: entry.employee_id,
+          employeeCode: empInfo?.employee_code ?? null,
+          employeeName: empInfo?.name ?? entry.employee_id,
+          distance: Math.round(entry.total_distance * 100) / 100,
+          sessions: entry.total_sessions,
+          duration: entry.total_duration,
+          // expenses field populated for all entries; only the "expenses" sort
+          // makes it primary. Omit when zero to keep response lean.
+          ...(entry.total_expenses_amount > 0 || metric === "expenses"
+            ? { expenses: Math.round(entry.total_expenses_amount * 100) / 100 }
+            : {}),
+        };
+      });
     });
   },
 };

@@ -5,6 +5,7 @@ import type {
   MinimalExpenseRow,
   SessionWithEmployeeRow,
 } from "./analytics.schema.js";
+import type { SessionTrendEntry, LeaderboardEntry } from "@fieldtrack/types";
 
 /**
  * Analytics repository — read-only queries for the analytics layer.
@@ -229,4 +230,152 @@ export const analyticsRepository = {
     }
     return (data ?? []) as SessionWithEmployeeRow[];
   },
+
+  // ─── Phase 20: org_daily_metrics ──────────────────────────────────────────
+
+  /**
+   * Fetch org-level daily metrics for session trend charts.
+   */
+  async getOrgDailyMetrics(
+    request: FastifyRequest,
+    from: string | undefined,
+    to: string | undefined,
+  ): Promise<SessionTrendEntry[]> {
+    let query = orgTable(request, "org_daily_metrics")
+      .select("date, total_sessions, total_distance_km, total_duration_seconds")
+      .order("date", { ascending: true });
+
+    if (from !== undefined) {
+      query = query.gte("date", from) as typeof query;
+    }
+    if (to !== undefined) {
+      query = query.lte("date", to) as typeof query;
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(`Analytics: failed to fetch org daily metrics: ${error.message}`);
+    }
+
+    return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+      date: row.date as string,
+      sessions: (row.total_sessions as number) ?? 0,
+      distance: (row.total_distance_km as number) ?? 0,
+      duration: (row.total_duration_seconds as number) ?? 0,
+    }));
+  },
+
+  /**
+   * Fetch aggregated employee_daily_metrics for leaderboard / top performers.
+   * Groups by employee_id in memory, summing all metric columns.
+   *
+   * Phase 20: Includes expenses_count and expenses_amount so the leaderboard
+   * can rank by expense totals directly from the pre-computed table without
+   * hitting the expenses table.
+   */
+  async getEmployeeMetricsAggregated(
+    request: FastifyRequest,
+    from: string | undefined,
+    to: string | undefined,
+  ): Promise<Array<{
+    employee_id: string;
+    total_distance: number;
+    total_duration: number;
+    total_sessions: number;
+    total_expenses_count: number;
+    total_expenses_amount: number;
+  }>> {
+    let query = orgTable(request, "employee_daily_metrics")
+      .select(
+        "employee_id, distance_km, duration_seconds, sessions, expenses_count, expenses_amount",
+      )
+      .order("date", { ascending: false });
+
+    if (from !== undefined) {
+      query = query.gte("date", from) as typeof query;
+    }
+    if (to !== undefined) {
+      query = query.lte("date", to) as typeof query;
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(`Analytics: failed to fetch employee daily metrics: ${error.message}`);
+    }
+
+    // Group in memory by employee_id, summing all metric columns
+    const map = new Map<string, {
+      total_distance: number;
+      total_duration: number;
+      total_sessions: number;
+      total_expenses_count: number;
+      total_expenses_amount: number;
+    }>();
+    for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+      const empId = row.employee_id as string;
+      const existing = map.get(empId) ?? {
+        total_distance: 0,
+        total_duration: 0,
+        total_sessions: 0,
+        total_expenses_count: 0,
+        total_expenses_amount: 0,
+      };
+      existing.total_distance += (row.distance_km as number) ?? 0;
+      existing.total_duration += (row.duration_seconds as number) ?? 0;
+      existing.total_sessions += (row.sessions as number) ?? 0;
+      existing.total_expenses_count += (row.expenses_count as number) ?? 0;
+      existing.total_expenses_amount += (row.expenses_amount as number) ?? 0;
+      map.set(empId, existing);
+    }
+
+    return [...map.entries()].map(([employee_id, m]) => ({
+      employee_id,
+      ...m,
+    }));
+  },
+
+  /**
+   * Fetch employee daily metrics for a specific employee.
+   */
+  async getEmployeeMetricsForUser(
+    request: FastifyRequest,
+    employeeId: string,
+    from: string | undefined,
+    to: string | undefined,
+  ): Promise<{ totalSessions: number; totalDistanceKm: number; totalDurationSeconds: number }> {
+    let query = orgTable(request, "employee_daily_metrics")
+      .select("sessions, distance_km, duration_seconds")
+      .eq("employee_id", employeeId);
+
+    if (from !== undefined) {
+      query = query.gte("date", from) as typeof query;
+    }
+    if (to !== undefined) {
+      query = query.lte("date", to) as typeof query;
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(`Analytics: failed to fetch user metrics: ${error.message}`);
+    }
+
+    let totalSessions = 0;
+    let totalDistanceKm = 0;
+    let totalDurationSeconds = 0;
+    for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+      totalSessions += (row.sessions as number) ?? 0;
+      totalDistanceKm += (row.distance_km as number) ?? 0;
+      totalDurationSeconds += (row.duration_seconds as number) ?? 0;
+    }
+
+    return {
+      totalSessions,
+      totalDistanceKm: Math.round(totalDistanceKm * 100) / 100,
+      totalDurationSeconds,
+    };
+  },
+
 };

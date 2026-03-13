@@ -30,8 +30,10 @@ export type OrgScopedTable =
     | "admin_sessions"
     | "attendance_sessions"
     | "employees"
+    | "employee_daily_metrics"
     | "expenses"
     | "gps_locations"
+    | "org_daily_metrics"
     | "session_summaries";
 
 export function orgTable(

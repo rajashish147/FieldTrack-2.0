@@ -28,6 +28,10 @@ export const userSummaryQuerySchema = dateRangeSchema.extend({
 export const ANALYTICS_METRICS = ["distance", "duration", "sessions"] as const;
 export type AnalyticsMetric = (typeof ANALYTICS_METRICS)[number];
 
+/** Leaderboard supports all session metrics plus expense count ranking. */
+export const LEADERBOARD_METRICS = ["distance", "duration", "sessions", "expenses"] as const;
+export type LeaderboardMetric = (typeof LEADERBOARD_METRICS)[number];
+
 export const topPerformersQuerySchema = dateRangeSchema.extend({
   metric: z.enum(ANALYTICS_METRICS, {
     error: "metric must be distance, duration, or sessions",
@@ -75,6 +79,24 @@ export type {
   OrgSummaryData,
   UserSummaryData,
   TopPerformerEntry,
+  SessionTrendEntry,
+  LeaderboardEntry,
 } from "@fieldtrack/types";
 
+// ─── Phase 20: Session Trend ─────────────────────────────────────────────────
+
+export const sessionTrendQuerySchema = dateRangeSchema;
+
+export type SessionTrendQuery = z.infer<typeof sessionTrendQuerySchema>;
+
+// ─── Phase 20: Leaderboard ───────────────────────────────────────────────────
+
+export const leaderboardQuerySchema = dateRangeSchema.extend({
+  metric: z.enum(LEADERBOARD_METRICS, {
+    error: "metric must be distance, duration, sessions, or expenses",
+  }),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+
+export type LeaderboardQuery = z.infer<typeof leaderboardQuerySchema>;
 

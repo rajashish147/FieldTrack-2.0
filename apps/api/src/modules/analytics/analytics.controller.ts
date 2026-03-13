@@ -4,6 +4,8 @@ import type {
   OrgSummaryQuery,
   UserSummaryQuery,
   TopPerformersQuery,
+  SessionTrendQuery,
+  LeaderboardQuery,
 } from "./analytics.schema.js";
 import { ok, handleError } from "../../utils/response.js";
 
@@ -80,6 +82,50 @@ export const analyticsController = {
       reply.status(200).send(ok(data));
     } catch (error) {
       handleError(error, request, reply, "Unexpected error in getTopPerformers");
+    }
+  },
+
+  /**
+   * GET /admin/session-trend?from=&to=
+   * Daily time-series of sessions, distance, and duration.
+   */
+  async getSessionTrend(
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<void> {
+    try {
+      const query = request.query as SessionTrendQuery;
+      const data = await analyticsService.getSessionTrend(
+        request,
+        query.from,
+        query.to,
+      );
+      reply.status(200).send(ok(data));
+    } catch (error) {
+      handleError(error, request, reply, "Unexpected error in getSessionTrend");
+    }
+  },
+
+  /**
+   * GET /admin/leaderboard?metric=distance|duration|sessions&from=&to=&limit=10
+   * Full leaderboard with rank, employee_code, employee_name, and all metrics.
+   */
+  async getLeaderboard(
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<void> {
+    try {
+      const query = request.query as LeaderboardQuery;
+      const data = await analyticsService.getLeaderboard(
+        request,
+        query.metric,
+        query.from,
+        query.to,
+        query.limit,
+      );
+      reply.status(200).send(ok(data));
+    } catch (error) {
+      handleError(error, request, reply, "Unexpected error in getLeaderboard");
     }
   },
 };
