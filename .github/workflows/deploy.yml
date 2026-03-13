@@ -146,6 +146,7 @@ jobs:
             # ── Monitoring stack ────────────────────────────────────────────────
             echo "=== Restarting monitoring stack ==="
             cd "$INFRA_DIR"
+            docker compose -f docker-compose.monitoring.yml pull
             docker compose -f docker-compose.monitoring.yml up -d
             echo "Monitoring stack restarted."
 
