@@ -7,7 +7,6 @@ import { env } from "./config/env.js";
 import { getLoggerConfig } from "./config/logger.js";
 import { registerJwt } from "./plugins/jwt.js";
 import { registerRoutes } from "./routes/index.js";
-import fastifyCompress from "@fastify/compress";
 import { startDistanceWorker } from "./workers/distance.worker.js";
 import { AppError } from "./utils/errors.js";
 import prometheusPlugin from "./plugins/prometheus.js";
@@ -46,17 +45,6 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(rateLimitPlugin);
   await app.register(abuseLoggingPlugin);
 
-  // Gzip + brotli response compression.
-  // zstd is intentionally excluded: Swagger UI cannot decode it and sends an
-  // empty body. Modern browsers advertise zstd in Accept-Encoding, which
-  // @fastify/compress would otherwise prefer over gzip/br.
-  // threshold: skip compression for responses under 1 KB.
-  await app.register(fastifyCompress, {
-    encodings: ["gzip", "br"],
-    global: true,
-    threshold: 1024,
-  });
-
   // Enrich the active HTTP span with Fastify-level context that the HTTP
   // auto-instrumentation cannot see: the matched route pattern, the Fastify
   // request ID, and the direct client IP.
@@ -86,46 +74,13 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   });
 
-  // Phase 10: x-request-id header, span stamping, and empty-response safety net.
-  //
-  // CRITICAL ORDERING: This is wrapped in an fp plugin registered AFTER
-  // @fastify/compress so it runs as the LAST onSend hook, after compression.
-  //
-  // Why this matters: direct app.addHook() calls execute immediately during
-  // buildApp(), while plugin hooks only register during app.ready(). Putting
-  // this inside an fp plugin ensures it initialises after compress (which was
-  // registered before this block), making it a true last-resort safety net.
+  // Phase 10: x-request-id header and span stamping.
   await app.register(fp(async function onSendSafetyPlugin(instance) {
     instance.addHook("onSend", async (request, reply, payload) => {
       void reply.header("x-request-id", request.id);
       const span = trace.getSpan(context.active());
       if (span) {
         span.setAttribute("http.status_code", reply.statusCode);
-      }
-
-      // Safety check: prevent empty JSON responses on 2xx routes.
-      // Catches cases where @fastify/compress drops or empties the payload
-      // (e.g. when a compressed stream fails silently or Node.js zstd support
-      // causes negotiation to silently discard the body).
-      const contentType = reply.getHeader("content-type");
-      if (
-        contentType &&
-        typeof contentType === "string" &&
-        contentType.includes("application/json") &&
-        reply.statusCode >= 200 &&
-        reply.statusCode < 300 &&
-        (
-          payload === undefined ||
-          payload === null ||
-          payload === "" ||
-          (Buffer.isBuffer(payload) && payload.length === 0)
-        )
-      ) {
-        request.log.warn(
-          { url: request.url, method: request.method, statusCode: reply.statusCode },
-          "Empty JSON response detected — returning standard empty response",
-        );
-        return JSON.stringify({ success: true, data: [] });
       }
 
       return payload;
