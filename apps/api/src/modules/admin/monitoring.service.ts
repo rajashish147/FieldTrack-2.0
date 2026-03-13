@@ -61,8 +61,7 @@ export const monitoringService = {
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<AdminSession[]> {
-    const result = await monitoringRepository.findHistory(request, page, limit);
-    return result ?? [];
+  ): Promise<{ data: AdminSession[]; total: number }> {
+    return monitoringRepository.findHistory(request, page, limit);
   },
 };

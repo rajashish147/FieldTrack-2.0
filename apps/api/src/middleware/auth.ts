@@ -3,6 +3,7 @@ import { trace, context } from "@opentelemetry/api";
 import { validate as uuidValidate } from "uuid";
 import { jwtPayloadSchema } from "../types/jwt.js";
 import { UnauthorizedError } from "../utils/errors.js";
+import { fail } from "../utils/response.js";
 import { verifySupabaseToken } from "../auth/jwtVerifier.js";
 import { supabaseServiceClient } from "../config/supabase.js";
 import { env } from "../config/env.js";
@@ -137,7 +138,7 @@ export async function authenticate(
             request.log.warn({ issues }, "JWT payload validation failed");
 
             const err = new UnauthorizedError(`Invalid token claims: ${issues}`);
-            reply.status(err.statusCode).send({ error: err.message });
+            reply.status(err.statusCode).send(fail(err.message, request.id));
             return;
         }
 
@@ -163,7 +164,7 @@ export async function authenticate(
         // Without it, the hook resolves normally and Fastify proceeds to call the
         // route handler — which then hits "Reply already sent". The client still
         // receives 401, but Fastify logs a spurious internal error.
-        void reply.status(err.statusCode).send({ error: err.message });
+        void reply.status(err.statusCode).send(fail(err.message, request.id));
         return;
     }
 }

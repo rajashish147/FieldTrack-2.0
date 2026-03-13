@@ -19,9 +19,16 @@ const monitoringSessionResponseSchema = z.object({
   data: adminSessionSchema,
 });
 
+const paginationMetaSchema = z.object({
+  page: z.number(),
+  limit: z.number(),
+  total: z.number(),
+});
+
 const monitoringHistoryResponseSchema = z.object({
   success: z.literal(true),
   data: z.array(adminSessionSchema),
+  pagination: paginationMetaSchema,
 });
 
 /**

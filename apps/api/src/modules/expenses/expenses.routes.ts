@@ -33,9 +33,16 @@ const singleExpenseResponseSchema = z.object({
   data: expenseItemSchema,
 });
 
+const paginationMetaSchema = z.object({
+  page: z.number(),
+  limit: z.number(),
+  total: z.number(),
+});
+
 const expenseListResponseSchema = z.object({
   success: z.literal(true),
   data: z.array(expenseItemSchema),
+  pagination: paginationMetaSchema,
 });
 
 /**

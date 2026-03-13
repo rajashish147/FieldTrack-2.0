@@ -59,19 +59,17 @@ export const attendanceService = {
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<EnrichedAttendanceSession[]> {
+  ): Promise<{ data: EnrichedAttendanceSession[]; total: number }> {
     const employeeId = request.employeeId;
-    if (!employeeId) return [];
-    const result = await attendanceRepository.findSessionsByUser(request, employeeId, page, limit);
-    return result ?? [];
+    if (!employeeId) return { data: [], total: 0 };
+    return attendanceRepository.findSessionsByUser(request, employeeId, page, limit);
   },
 
   async getOrgSessions(
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<EnrichedAttendanceSession[]> {
-    const result = await attendanceRepository.findSessionsByOrg(request, page, limit);
-    return result ?? [];
+  ): Promise<{ data: EnrichedAttendanceSession[]; total: number }> {
+    return attendanceRepository.findSessionsByOrg(request, page, limit);
   },
 };

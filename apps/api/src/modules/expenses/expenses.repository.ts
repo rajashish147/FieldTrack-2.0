@@ -74,10 +74,10 @@ export const expensesRepository = {
     employeeId: string,
     page: number,
     limit: number,
-  ): Promise<EnrichedExpense[]> {
-    const { data, error } = await applyPagination(
+  ): Promise<{ data: EnrichedExpense[]; total: number }> {
+    const { data, error, count } = await applyPagination(
       orgTable(request, "expenses")
-        .select(EXPENSE_ENRICHED_COLS)
+        .select(EXPENSE_ENRICHED_COLS, { count: "exact" })
         .eq("employee_id", employeeId)
         .order("submitted_at", { ascending: false }),
       page,
@@ -87,17 +87,20 @@ export const expensesRepository = {
     if (error) {
       throw new Error(`Failed to fetch user expenses: ${error.message}`);
     }
-    return ((data ?? []) as Array<Record<string, unknown>>).map(flattenEmployee);
+    return {
+      data: ((data ?? []) as Array<Record<string, unknown>>).map(flattenEmployee),
+      total: count ?? 0,
+    };
   },
 
   async findExpensesByOrg(
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<EnrichedExpense[]> {
-    const { data, error } = await applyPagination(
+  ): Promise<{ data: EnrichedExpense[]; total: number }> {
+    const { data, error, count } = await applyPagination(
       orgTable(request, "expenses")
-        .select(EXPENSE_ENRICHED_COLS)
+        .select(EXPENSE_ENRICHED_COLS, { count: "exact" })
         .order("submitted_at", { ascending: false }),
       page,
       limit,
@@ -106,7 +109,10 @@ export const expensesRepository = {
     if (error) {
       throw new Error(`Failed to fetch org expenses: ${error.message}`);
     }
-    return ((data ?? []) as Array<Record<string, unknown>>).map(flattenEmployee);
+    return {
+      data: ((data ?? []) as Array<Record<string, unknown>>).map(flattenEmployee),
+      total: count ?? 0,
+    };
   },
 
   async updateExpenseStatus(

@@ -12,26 +12,30 @@ export type ErrorResponse = {
 };
 export type ApiResponse<T> = SuccessResponse<T> | ErrorResponse;
 
-// ─── Optional pagination metadata ─────────────────────────────────────────────
+// ─── Pagination metadata ───────────────────────────────────────────────────────
 
-/**
- * Optional pagination metadata for list endpoints.
- * Not currently used but available for future enhancement.
- *
- * Usage:
- *   type PaginatedResponse<T> = {
- *     success: true;
- *     data: T[];
- *     meta: PaginationMeta;
- *   };
- */
 export type PaginationMeta = {
   page: number;
   limit: number;
-  total?: number;
+  total: number;
+};
+
+export type PaginatedSuccessResponse<T> = {
+  success: true;
+  data: T[];
+  pagination: PaginationMeta;
 };
 
 // ─── Builder helpers ──────────────────────────────────────────────────────────
+
+export function paginated<T>(
+  data: T[],
+  page: number,
+  limit: number,
+  total: number,
+): PaginatedSuccessResponse<T> {
+  return { success: true, data, pagination: { page, limit, total } };
+}
 
 export function ok<T>(data: T): SuccessResponse<T> {
   return { success: true, data };

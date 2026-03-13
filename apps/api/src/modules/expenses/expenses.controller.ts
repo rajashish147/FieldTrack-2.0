@@ -5,7 +5,7 @@ import {
   updateExpenseStatusBodySchema,
   expensePaginationSchema,
 } from "./expenses.schema.js";
-import { ok, fail, handleError } from "../../utils/response.js";
+import { ok, fail, paginated, handleError } from "../../utils/response.js";
 
 /**
  * Expenses controller — parses/validates request data, delegates to service,
@@ -39,12 +39,12 @@ export const expensesController = {
   async getMy(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
       const parsed = expensePaginationSchema.parse(request.query);
-      const expenses = await expensesService.getMyExpenses(
+      const result = await expensesService.getMyExpenses(
         request,
         parsed.page,
         parsed.limit,
       );
-      reply.status(200).send(ok(expenses));
+      reply.status(200).send(paginated(result.data, parsed.page, parsed.limit, result.total));
     } catch (error) {
       handleError(error, request, reply, "Unexpected error fetching user expenses");
     }
@@ -60,12 +60,12 @@ export const expensesController = {
   ): Promise<void> {
     try {
       const parsed = expensePaginationSchema.parse(request.query);
-      const expenses = await expensesService.getOrgExpenses(
+      const result = await expensesService.getOrgExpenses(
         request,
         parsed.page,
         parsed.limit,
       );
-      reply.status(200).send(ok(expenses));
+      reply.status(200).send(paginated(result.data, parsed.page, parsed.limit, result.total));
     } catch (error) {
       handleError(error, request, reply, "Unexpected error fetching org expenses");
     }

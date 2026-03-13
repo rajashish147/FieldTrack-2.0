@@ -24,6 +24,12 @@ const sessionItemSchema: z.ZodType<AttendanceSession> = z.object({
   activityStatus: z.enum(["ACTIVE", "RECENT", "INACTIVE"]).optional(),
 });
 
+const paginationMetaSchema = z.object({
+  page: z.number(),
+  limit: z.number(),
+  total: z.number(),
+});
+
 const singleObjectResponseSchema = z.object({
   success: z.literal(true),
   data: sessionItemSchema,
@@ -32,6 +38,7 @@ const singleObjectResponseSchema = z.object({
 const sessionListResponseSchema = z.object({
   success: z.literal(true),
   data: z.array(sessionItemSchema),
+  pagination: paginationMetaSchema,
 });
 
 /**

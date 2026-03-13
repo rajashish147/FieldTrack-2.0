@@ -161,10 +161,10 @@ export const attendanceRepository = {
     employeeId: string,
     page: number,
     limit: number,
-  ): Promise<EnrichedAttendanceSession[]> {
-    const { data, error } = await applyPagination(
+  ): Promise<{ data: EnrichedAttendanceSession[]; total: number }> {
+    const { data, error, count } = await applyPagination(
       orgTable(request, "attendance_sessions")
-        .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at, employees!attendance_sessions_employee_id_fkey(name, employee_code)")
+        .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at, employees!attendance_sessions_employee_id_fkey(name, employee_code)", { count: "exact" })
         .eq("employee_id", employeeId)
         .order("checkin_at", { ascending: false }),
       page,
@@ -175,7 +175,7 @@ export const attendanceRepository = {
       throw new Error(`Failed to fetch user sessions: ${error.message}`);
     }
 
-    return ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
+    const mapped = ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
       const emp = row.employees as { name?: string; employee_code?: string } | null;
       const { employees: _emp, ...rest } = row;
       return {
@@ -185,6 +185,7 @@ export const attendanceRepository = {
         activityStatus: computeActivityStatus(rest.checkout_at as string | null),
       } as EnrichedAttendanceSession;
     });
+    return { data: mapped, total: count ?? 0 };
   },
 
   /**
@@ -195,20 +196,21 @@ export const attendanceRepository = {
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<EnrichedAttendanceSession[]> {
+  ): Promise<{ data: EnrichedAttendanceSession[]; total: number }> {
     const query = orgTable(request, "attendance_sessions")
       .select(
         "id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at, employees!attendance_sessions_employee_id_fkey(name, employee_code)",
+        { count: "exact" },
       )
       .order("checkin_at", { ascending: false });
 
-    const { data, error } = await applyPagination(query, page, limit);
+    const { data, error, count } = await applyPagination(query, page, limit);
 
     if (error) {
       throw new Error(`Failed to fetch org sessions: ${error.message}`);
     }
 
-    return ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
+    const mapped = ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
       const emp = row.employees as { name?: string; employee_code?: string } | null;
       const { employees: _emp, ...rest } = row;
       return {
@@ -218,6 +220,7 @@ export const attendanceRepository = {
         activityStatus: computeActivityStatus(rest.checkout_at as string | null),
       } as EnrichedAttendanceSession;
     });
+    return { data: mapped, total: count ?? 0 };
   },
 
   /**

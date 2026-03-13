@@ -64,12 +64,11 @@ export const expensesService = {
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<EnrichedExpense[]> {
+  ): Promise<{ data: EnrichedExpense[]; total: number }> {
     const employeeId = request.employeeId;
-    if (!employeeId) return [];
+    if (!employeeId) return { data: [], total: 0 };
 
-    const result = await expensesRepository.findExpensesByUser(request, employeeId, page, limit);
-    return result ?? [];
+    return expensesRepository.findExpensesByUser(request, employeeId, page, limit);
   },
 
   /**
@@ -80,9 +79,8 @@ export const expensesService = {
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<EnrichedExpense[]> {
-    const result = await expensesRepository.findExpensesByOrg(request, page, limit);
-    return result ?? [];
+  ): Promise<{ data: EnrichedExpense[]; total: number }> {
+    return expensesRepository.findExpensesByOrg(request, page, limit);
   },
 
   /**

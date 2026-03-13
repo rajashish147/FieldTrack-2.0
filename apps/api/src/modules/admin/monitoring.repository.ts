@@ -92,10 +92,10 @@ export const monitoringRepository = {
     request: FastifyRequest,
     page: number,
     limit: number,
-  ): Promise<AdminSession[]> {
-    const { data, error } = await applyPagination(
+  ): Promise<{ data: AdminSession[]; total: number }> {
+    const { data, error, count } = await applyPagination(
       orgTable(request, "admin_sessions")
-        .select(MONITORING_COLS)
+        .select(MONITORING_COLS, { count: "exact" })
         .eq("admin_id", request.user.sub)
         .order("started_at", { ascending: false }),
       page,
@@ -105,6 +105,6 @@ export const monitoringRepository = {
     if (error) {
       throw new Error(`Failed to fetch monitoring history: ${error.message}`);
     }
-    return (data ?? []) as AdminSession[];
+    return { data: (data ?? []) as AdminSession[], total: count ?? 0 };
   },
 };

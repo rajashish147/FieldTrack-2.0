@@ -41,7 +41,8 @@ export const analyticsRepository = {
   ): Promise<MinimalSessionRow[]> {
     let query = orgTable(request, "attendance_sessions")
       .select("id, employee_id, total_distance_km, total_duration_seconds")
-      .order("checkin_at", { ascending: false });
+      .order("checkin_at", { ascending: false })
+      .limit(5000);
 
     if (from !== undefined) {
       query = query.gte("checkin_at", from) as typeof query;
@@ -70,7 +71,8 @@ export const analyticsRepository = {
     let query = orgTable(request, "attendance_sessions")
       .select("id, employee_id, total_distance_km, total_duration_seconds")
       .eq("employee_id", employeeId)
-      .order("checkin_at", { ascending: false });
+      .order("checkin_at", { ascending: false })
+      .limit(5000);
 
     if (from !== undefined) {
       query = query.gte("checkin_at", from) as typeof query;
