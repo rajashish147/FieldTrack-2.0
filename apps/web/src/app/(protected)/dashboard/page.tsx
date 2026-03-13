@@ -1,10 +1,12 @@
 "use client";
 
 import { useAuth } from "@/hooks/useAuth";
-import { useOrgSummary, useTopPerformers } from "@/hooks/queries/useAnalytics";
+import { useOrgSummary, useTopPerformers, useSessionTrend, useLeaderboard } from "@/hooks/queries/useAnalytics";
 import { useMyDashboard } from "@/hooks/queries/useDashboard";
 import { SummaryCards } from "@/components/charts/SummaryCards";
 import { TopPerformersChart } from "@/components/charts/TopPerformersChart";
+import { SessionTrendChart } from "@/components/charts/SessionTrendChart";
+import { LeaderboardTable } from "@/components/charts/LeaderboardTable";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -46,6 +48,8 @@ function EmployeeDashboard() {
 function AdminDashboard() {
   const summary = useOrgSummary();
   const topByDistance = useTopPerformers("distance", 10);
+  const sessionTrend = useSessionTrend();
+  const leaderboard = useLeaderboard("distance", 10);
 
   return (
     <>
@@ -59,6 +63,21 @@ function AdminDashboard() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Session Trend</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {sessionTrend.isLoading ? (
+            <LoadingSkeleton variant="card" />
+          ) : sessionTrend.error ? (
+            <ErrorBanner error={sessionTrend.error} />
+          ) : (
+            <SessionTrendChart data={sessionTrend.data ?? []} />
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Top Performers by Distance</CardTitle>
         </CardHeader>
         <CardContent>
@@ -68,6 +87,21 @@ function AdminDashboard() {
             <ErrorBanner error={topByDistance.error} />
           ) : (
             <TopPerformersChart data={topByDistance.data ?? []} metric="distance" />
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Employee Leaderboard</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {leaderboard.isLoading ? (
+            <LoadingSkeleton variant="card" />
+          ) : leaderboard.error ? (
+            <ErrorBanner error={leaderboard.error} />
+          ) : (
+            <LeaderboardTable data={leaderboard.data ?? []} metric="distance" />
           )}
         </CardContent>
       </Card>

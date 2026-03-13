@@ -19,6 +19,8 @@ export const API = {
   // Analytics
   orgSummary: "/admin/org-summary",
   topPerformers: "/admin/top-performers",
+  sessionTrend: "/admin/session-trend",
+  leaderboard: "/admin/leaderboard",
 
   // Personal dashboard
   myDashboard: "/dashboard/my-summary",
@@ -30,4 +32,8 @@ export const API = {
 
   // Employee management
   createEmployee: "/admin/employees",
+
+  // Profile
+  myProfile: "/profile/me",
+  employeeProfile: (id: string) => `/admin/employees/${id}/profile`,
 } as const;
