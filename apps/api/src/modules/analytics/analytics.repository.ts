@@ -5,7 +5,7 @@ import type {
   MinimalExpenseRow,
   SessionWithEmployeeRow,
 } from "./analytics.schema.js";
-import type { SessionTrendEntry, LeaderboardEntry } from "@fieldtrack/types";
+import type { SessionTrendEntry } from "@fieldtrack/types";
 
 /**
  * Analytics repository — read-only queries for the analytics layer.
