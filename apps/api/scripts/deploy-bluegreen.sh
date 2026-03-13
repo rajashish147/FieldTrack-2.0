@@ -15,6 +15,7 @@ NETWORK="fieldtrack_network"
 
 ENV_FILE="/home/ashish/FieldTrack-2.0/apps/api/.env"
 NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack"
+ACTIVE_SLOT_FILE="/var/run/fieldtrack-active-slot"
 DEPLOY_HISTORY="/home/ashish/FieldTrack-2.0/apps/api/.deploy_history"
 MAX_HISTORY=5
 
@@ -31,11 +32,8 @@ docker pull "$IMAGE"
 
 echo "[2/7] Detecting active container..."
 
-# Detection targets the upstream block's "server" directive.
-# The nginx config has exactly one line like:
-#     server 127.0.0.1:3001;
-# inside the upstream fieldtrack_backend block.
-if grep -q "server 127.0.0.1:$BLUE_PORT;" "$NGINX_CONF"; then
+# Read active slot from state file (first deploy defaults to green → blue becomes inactive)
+if [ -f "$ACTIVE_SLOT_FILE" ] && [ "$(cat "$ACTIVE_SLOT_FILE")" = "blue" ]; then
     ACTIVE="blue"
     ACTIVE_NAME=$BLUE_NAME
     ACTIVE_PORT=$BLUE_PORT
@@ -108,6 +106,9 @@ echo "[6/7] Reloading nginx..."
 
 sudo nginx -t
 sudo systemctl reload nginx
+
+# Persist new active slot so the next deploy reads it correctly
+echo "$INACTIVE" > "$ACTIVE_SLOT_FILE"
 
 echo "[7/7] Cleaning old container..."
 
