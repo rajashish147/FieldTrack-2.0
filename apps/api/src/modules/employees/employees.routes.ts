@@ -8,9 +8,9 @@ import { createEmployeeBodySchema } from "./employees.schema.js";
 const employeeResponseSchema = z.object({
   success: z.literal(true),
   data: z.object({
-    id: z.string().uuid(),
-    organization_id: z.string().uuid(),
-    user_id: z.string().uuid().nullable(),
+    id: z.string(),
+    organization_id: z.string(),
+    user_id: z.string().nullable(),
     name: z.string(),
     employee_code: z.string(),
     phone: z.string().nullable(),

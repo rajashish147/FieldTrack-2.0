@@ -6,9 +6,9 @@ import { monitoringController } from "./monitoring.controller.js";
 import { monitoringPaginationSchema } from "./monitoring.service.js";
 
 const adminSessionSchema = z.object({
-  id: z.string().uuid(),
-  admin_id: z.string().uuid(),
-  organization_id: z.string().uuid(),
+  id: z.string(),
+  admin_id: z.string(),
+  organization_id: z.string(),
   started_at: z.string(),
   ended_at: z.string().nullable(),
   created_at: z.string(),

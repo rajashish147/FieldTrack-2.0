@@ -24,6 +24,7 @@ import {
   TEST_ORG_ID,
 } from "../../setup/test-server.js";
 import { employeesRepository } from "../../../src/modules/employees/employees.repository.js";
+import { BadRequestError } from "../../../src/utils/errors.js";
 
 // ─── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -166,6 +167,52 @@ describe("Employees Integration Tests", () => {
         expect.anything(),
         expect.objectContaining({ name: "Alice Smith", employee_code: "EMP002" }),
       );
+    });
+
+    it("returns 400 when user_id does not match any registered user (FK violation)", async () => {
+      vi.mocked(employeesRepository.createEmployee).mockRejectedValue(
+        new BadRequestError("user_id '3fa85f64-5717-4562-b3fc-2c963f66afa6' does not correspond to any registered user"),
+      );
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/admin/employees",
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Bob",
+          employee_code: "EMP003",
+          user_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        }),
+      });
+
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.body) as { success: boolean; error: string };
+      expect(body.success).toBe(false);
+      expect(body.error).toContain("does not correspond to any registered user");
+    });
+
+    it("returns 400 when employee_code is already in use (duplicate key)", async () => {
+      vi.mocked(employeesRepository.createEmployee).mockRejectedValue(
+        new BadRequestError("employee_code 'EMP002' is already in use within this organization"),
+      );
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/admin/employees",
+        headers: {
+          authorization: `Bearer ${adminToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ name: "Alice Duplicate", employee_code: "EMP002" }),
+      });
+
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.body) as { success: boolean; error: string };
+      expect(body.success).toBe(false);
+      expect(body.error).toContain("already in use");
     });
   });
 });

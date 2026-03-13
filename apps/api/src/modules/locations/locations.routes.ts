@@ -10,15 +10,16 @@ import {
 } from "./locations.schema.js";
 
 const locationItemSchema = z.object({
-    id: z.string().uuid(),
-    session_id: z.string().uuid(),
-    organization_id: z.string().uuid(),
+    id: z.string(),
+    session_id: z.string(),
+    organization_id: z.string(),
+    employee_id: z.string(),
     latitude: z.number(),
     longitude: z.number(),
     accuracy: z.number().nullable(),
     recorded_at: z.string(),
-    created_at: z.string(),
     sequence_number: z.number().nullable(),
+    is_duplicate: z.boolean(),
 });
 
 const locationResponseSchema = z.object({
