@@ -39,14 +39,5 @@ export function applyPagination<T extends Rangeable>(
   );
   const offset = (safePage - 1) * safeLimit;
   
-  console.log("PAGINATION:", { 
-    page, 
-    limit, 
-    safePage, 
-    safeLimit, 
-    offset, 
-    range: `${offset} to ${offset + safeLimit - 1}` 
-  });
-  
   return query.range(offset, offset + safeLimit - 1);
 }

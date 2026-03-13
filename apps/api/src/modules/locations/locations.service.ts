@@ -112,10 +112,11 @@ export const locationsService = {
     request: FastifyRequest,
     sessionId: string,
   ): Promise<LocationRecord[]> {
-    return locationsRepository.findLocationsBySession(
+    const result = await locationsRepository.findLocationsBySession(
       request,
       sessionId,
       request.employeeId,
     );
+    return result ?? [];
   },
 };

@@ -88,12 +88,40 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Phase 10: Add x-request-id to every reply for end-to-end tracing.
   // Also stamp the final status code on the span; the span is still open
   // during onSend (it closes after the socket write completes).
-  app.addHook("onSend", async (request, reply) => {
+  // SAFETY: Ensure response payload is never undefined/null for JSON endpoints
+  app.addHook("onSend", async (request, reply, payload) => {
     void reply.header("x-request-id", request.id);
     const span = trace.getSpan(context.active());
     if (span) {
       span.setAttribute("http.status_code", reply.statusCode);
     }
+
+    // Safety check: prevent empty responses for JSON endpoints
+    // Returns a valid response matching the standard { success, data } contract
+    const contentType = reply.getHeader("content-type");
+    if (
+      contentType &&
+      typeof contentType === "string" &&
+      contentType.includes("application/json") &&
+      reply.statusCode >= 200 &&
+      reply.statusCode < 300 &&
+      (payload === undefined || payload === null || payload === "")
+    ) {
+      request.log.warn(
+        {
+          url: request.url,
+          method: request.method,
+          statusCode: reply.statusCode,
+        },
+        "Empty JSON response detected - returning standard empty response",
+      );
+      return JSON.stringify({
+        success: true,
+        data: [],
+      });
+    }
+
+    return payload;
   });
 
   // Phase 10: Global error handler — unhandled errors include requestId

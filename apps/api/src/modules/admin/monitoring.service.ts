@@ -62,6 +62,7 @@ export const monitoringService = {
     page: number,
     limit: number,
   ): Promise<AdminSession[]> {
-    return monitoringRepository.findHistory(request, page, limit);
+    const result = await monitoringRepository.findHistory(request, page, limit);
+    return result ?? [];
   },
 };
