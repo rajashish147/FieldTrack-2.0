@@ -68,7 +68,8 @@ export const expensesService = {
     const employeeId = request.employeeId;
     if (!employeeId) return [];
 
-    return expensesRepository.findExpensesByUser(request, employeeId, page, limit);
+    const result = await expensesRepository.findExpensesByUser(request, employeeId, page, limit);
+    return result ?? [];
   },
 
   /**
@@ -80,7 +81,8 @@ export const expensesService = {
     page: number,
     limit: number,
   ): Promise<EnrichedExpense[]> {
-    return expensesRepository.findExpensesByOrg(request, page, limit);
+    const result = await expensesRepository.findExpensesByOrg(request, page, limit);
+    return result ?? [];
   },
 
   /**

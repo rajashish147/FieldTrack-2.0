@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { monitoringRepository } from "./monitoring.repository.js";
-import { NotFoundError } from "../../utils/errors.js";
+import { BadRequestError, NotFoundError } from "../../utils/errors.js";
 import type { AdminSession } from "../../types/db.js";
 import { z } from "zod";
 
@@ -19,7 +19,20 @@ export const monitoringService = {
       return active;
     }
 
-    const session = await monitoringRepository.startSession(request);
+    let session: AdminSession;
+    try {
+      session = await monitoringRepository.startSession(request);
+    } catch (error) {
+      // Race-safe idempotency: if a concurrent request already created the
+      // active row, return that row instead of surfacing a 400.
+      if (error instanceof BadRequestError) {
+        const currentActive = await monitoringRepository.getActiveSession(request);
+        if (currentActive) {
+          return currentActive;
+        }
+      }
+      throw error;
+    }
 
     request.log.info(
       { event: "admin_monitoring_started", adminId: request.user.sub, sessionId: session.id },

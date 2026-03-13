@@ -62,7 +62,8 @@ export const attendanceService = {
   ): Promise<EnrichedAttendanceSession[]> {
     const employeeId = request.employeeId;
     if (!employeeId) return [];
-    return attendanceRepository.findSessionsByUser(request, employeeId, page, limit);
+    const result = await attendanceRepository.findSessionsByUser(request, employeeId, page, limit);
+    return result ?? [];
   },
 
   async getOrgSessions(
@@ -70,6 +71,7 @@ export const attendanceService = {
     page: number,
     limit: number,
   ): Promise<EnrichedAttendanceSession[]> {
-    return attendanceRepository.findSessionsByOrg(request, page, limit);
+    const result = await attendanceRepository.findSessionsByOrg(request, page, limit);
+    return result ?? [];
   },
 };

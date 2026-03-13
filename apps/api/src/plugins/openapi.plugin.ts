@@ -87,8 +87,8 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
       },
       servers: [
         {
-          url: "/",
-          description: "Current server",          
+          url: "https://api.fieldtrack.meowsician.tech",
+          description: "Production",
         },
         {
           url: "http://localhost:3001",

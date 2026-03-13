@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BASE_URL="${FT_API_BASE_URL:-https://api.fieldtrack.meowsician.tech}"
-API="${BASE_URL}/api"
+API="${BASE_URL}"
 
 EMP_EMAIL="${FT_EMP_EMAIL:-}"
 EMP_PASSWORD="${FT_EMP_PASSWORD:-}"
