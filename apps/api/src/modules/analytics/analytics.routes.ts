@@ -22,9 +22,11 @@ const orgSummaryResponseSchema = z.object({
   }),
 });
 
+const unknownObject = z.object({}).passthrough();
+
 const topPerformersResponseSchema = z.object({
   success: z.literal(true),
-  data: z.array(z.any()),
+  data: z.array(unknownObject),
 });
 
 const userSummaryResponseSchema = z.object({

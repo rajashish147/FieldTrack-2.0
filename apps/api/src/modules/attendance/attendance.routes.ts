@@ -6,9 +6,16 @@ import { attendanceController } from "./attendance.controller.js";
 import { sessionSummaryController } from "../session_summary/session_summary.controller.js";
 import { paginationSchema } from "./attendance.schema.js";
 
+const unknownObject = z.object({}).passthrough();
+
+const singleObjectResponseSchema = z.object({
+  success: z.literal(true),
+  data: unknownObject,
+});
+
 const sessionListResponseSchema = z.object({
   success: z.literal(true),
-  data: z.array(z.any()),
+  data: z.array(unknownObject),
 });
 
 /**
@@ -20,7 +27,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/attendance/check-in",
     {
-      schema: { tags: ["attendance"] },
+      schema: { tags: ["attendance"], response: { 201: singleObjectResponseSchema } },
       preValidation: [authenticate],
     },
     attendanceController.checkIn,
@@ -30,7 +37,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/attendance/check-out",
     {
-      schema: { tags: ["attendance"] },
+      schema: { tags: ["attendance"], response: { 200: singleObjectResponseSchema } },
       preValidation: [authenticate],
     },
     attendanceController.checkOut,
@@ -41,7 +48,7 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { sessionId: string } }>(
     "/attendance/:sessionId/recalculate",
     {
-      schema: { tags: ["attendance"] },
+      schema: { tags: ["attendance"], response: { 200: singleObjectResponseSchema } },
       config: {
         rateLimit: {
           max: 5,

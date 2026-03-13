@@ -9,9 +9,16 @@ import {
   updateExpenseStatusBodySchema,
 } from "./expenses.schema.js";
 
+const unknownObject = z.object({}).passthrough();
+
+const singleExpenseResponseSchema = z.object({
+  success: z.literal(true),
+  data: unknownObject,
+});
+
 const expenseListResponseSchema = z.object({
   success: z.literal(true),
-  data: z.array(z.any()),
+  data: z.array(unknownObject),
 });
 
 /**
@@ -29,7 +36,7 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/expenses",
     {
-      schema: { tags: ["expenses"], body: createExpenseBodySchema },
+      schema: { tags: ["expenses"], body: createExpenseBodySchema, response: { 201: singleExpenseResponseSchema } },
       config: {
         rateLimit: {
           max: 10,
@@ -75,7 +82,7 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
   app.patch<{ Params: { id: string } }>(
     "/admin/expenses/:id",
     {
-      schema: { tags: ["admin"], body: updateExpenseStatusBodySchema },
+      schema: { tags: ["admin"], body: updateExpenseStatusBodySchema, response: { 200: singleExpenseResponseSchema } },
       // preValidation ensures auth/role fires before body validation
       preValidation: [authenticate, requireRole("ADMIN")],
     },
