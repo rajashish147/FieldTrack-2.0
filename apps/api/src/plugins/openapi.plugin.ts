@@ -103,6 +103,7 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
         { name: "analytics", description: "Business analytics and reporting" },
         { name: "admin", description: "Administrative operations (ADMIN role required)" },
         { name: "dashboard", description: "Employee dashboard and personal statistics" },
+        { name: "profile", description: "Employee profile and activity status" },
       ],
       components: {
         securitySchemes: {
