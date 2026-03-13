@@ -98,6 +98,45 @@ export interface TopPerformerEntry {
   sessionsCount?: number;
 }
 
+// ─── Analytics Engine (Phase 20) ──────────────────────────────────────────────
+
+export interface SessionTrendEntry {
+  date: string;
+  sessions: number;
+  distance: number;
+  duration: number;
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  employeeId: string;
+  employeeCode: string | null;
+  employeeName: string;
+  distance: number;
+  sessions: number;
+  duration: number;
+  /** Populated only when the leaderboard is ranked by the "expenses" metric. */
+  expenses?: number;
+}
+
+export interface EmployeeProfileData {
+  id: string;
+  name: string;
+  employee_code: string | null;
+  phone: string | null;
+  is_active: boolean;
+  activityStatus: ActivityStatus;
+  last_activity_at: string | null;
+  created_at: string;
+  stats: {
+    totalSessions: number;
+    totalDistanceKm: number;
+    totalDurationSeconds: number;
+    expensesSubmitted: number;
+    expensesApproved: number;
+  };
+}
+
 // ─── Admin monitoring ──────────────────────────────────────────────────────────────
 
 export interface AdminSession {
