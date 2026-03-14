@@ -38,4 +38,12 @@ export const API = {
   // Profile
   myProfile: "/profile/me",
   employeeProfile: (id: string) => `/admin/employees/${id}/profile`,
+
+  // Admin aggregations
+  /** Expense totals grouped by employee — one row per employee. */
+  expensesSummary: "/admin/expenses/summary",
+  /** Single-request dashboard aggregation replacing 4+ separate calls. */
+  adminDashboard: "/admin/dashboard",
+  /** Latest GPS position per employee for map rendering. */
+  adminMap: "/admin/monitoring/map",
 } as const;

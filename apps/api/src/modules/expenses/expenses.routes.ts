@@ -4,6 +4,8 @@ import type { Expense } from "@fieldtrack/types";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { expensesController } from "./expenses.controller.js";
+import { expensesRepository } from "./expenses.repository.js";
+import { handleError, paginated } from "../../utils/response.js";
 import {
   createExpenseBodySchema,
   expensePaginationSchema,
@@ -111,5 +113,69 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
       preValidation: [authenticate, requireRole("ADMIN")],
     },
     expensesController.updateStatus,
+  );
+
+  /**
+   * GET /admin/expenses/summary
+   *
+   * Returns one aggregated row per employee instead of individual expense records.
+   * Drastically reduces payload size for orgs with hundreds of expenses.
+   *
+   * Each row contains:
+   *  - pendingCount / pendingAmount  — actionable backlog
+   *  - totalCount  / totalAmount     — lifetime totals
+   *  - latestExpenseDate             — for recency sorting
+   *
+   * Sorted: employees with ≥1 pending expense first, then by latest date DESC.
+   */
+  const employeeExpenseSummarySchema = z.object({
+    employeeId: z.string(),
+    employeeName: z.string(),
+    employeeCode: z.string().nullable(),
+    pendingCount: z.number(),
+    pendingAmount: z.number(),
+    totalCount: z.number(),
+    totalAmount: z.number(),
+    latestExpenseDate: z.string().nullable(),
+  });
+
+  app.get(
+    "/admin/expenses/summary",
+    {
+      schema: {
+        tags: ["admin"],
+        querystring: z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          limit: z.coerce.number().int().min(1).max(100).default(50),
+        }),
+        response: {
+          200: z
+            .object({
+              success: z.literal(true),
+              data: z.array(employeeExpenseSummarySchema),
+              pagination: z.object({
+                page: z.number(),
+                limit: z.number(),
+                total: z.number(),
+              }),
+            })
+            .describe("Expense summary grouped by employee"),
+        },
+      },
+      preValidation: [authenticate, requireRole("ADMIN")],
+    },
+    async (request, reply) => {
+      try {
+        const { page, limit } = request.query as { page: number; limit: number };
+        const result = await expensesRepository.findExpenseSummaryByEmployee(
+          request,
+          page,
+          limit,
+        );
+        reply.status(200).send(paginated(result.data, page, limit, result.total));
+      } catch (error) {
+        handleError(error, request, reply, "Unexpected error fetching expense summary");
+      }
+    },
   );
 }

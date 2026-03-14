@@ -3,6 +3,7 @@ import { orgTable } from "../../db/query.js";
 import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest } from "fastify";
 import type { Expense, ExpenseStatus, CreateExpenseBody } from "./expenses.schema.js";
+import type { EmployeeExpenseSummary } from "@fieldtrack/types";
 
 /** Enriched expense returned by list queries — adds employee code and name. */
 export type EnrichedExpense = Expense & {
@@ -133,5 +134,76 @@ export const expensesRepository = {
       throw new Error(`Failed to update expense status: ${error.message}`);
     }
     return flattenEmployee(data as Record<string, unknown>);
+  },
+
+  /**
+   * Returns one summary row per employee with pending/total expense aggregates.
+   * Sorted: employees with pending expenses first, then by latest expense date DESC.
+   * O(distinct employees) — significantly faster than returning all expense rows.
+   */
+  async findExpenseSummaryByEmployee(
+    request: FastifyRequest,
+    page: number,
+    limit: number,
+  ): Promise<{ data: EmployeeExpenseSummary[]; total: number }> {
+    // Fetch the full (org-scoped) expense list with employee info.
+    // We group in application code to avoid a raw SQL RPC; the expense
+    // table is orders of magnitude smaller than attendance_sessions.
+    const { data, error } = await orgTable(request, "expenses")
+      .select(`id, employee_id, amount, status, submitted_at, ${EXPENSE_ENRICHED_COLS}`, { count: "exact" })
+      .order("submitted_at", { ascending: false })
+      .limit(5000); // safety cap — grouping happens in JS below
+
+    if (error) {
+      throw new Error(`Failed to fetch expense summary: ${error.message}`);
+    }
+
+    const rows = ((data ?? []) as Array<Record<string, unknown>>).map(flattenEmployee);
+
+    // Aggregate per employee
+    const map = new Map<string, EmployeeExpenseSummary>();
+    for (const row of rows) {
+      const empId = row.employee_id as string;
+      const existing = map.get(empId);
+      const amount = row.amount as number;
+      const isPending = row.status === "PENDING";
+
+      if (!existing) {
+        map.set(empId, {
+          employeeId: empId,
+          employeeName: row.employee_name ?? `Employee …${empId.slice(-4)}`,
+          employeeCode: row.employee_code ?? null,
+          pendingCount: isPending ? 1 : 0,
+          pendingAmount: isPending ? amount : 0,
+          totalCount: 1,
+          totalAmount: amount,
+          latestExpenseDate: row.submitted_at as string,
+        });
+      } else {
+        existing.totalCount++;
+        existing.totalAmount += amount;
+        if (isPending) {
+          existing.pendingCount++;
+          existing.pendingAmount += amount;
+        }
+      }
+    }
+
+    // Sort: pending first, then by latest expense date
+    const groups = [...map.values()].sort((a, b) => {
+      if (b.pendingCount !== a.pendingCount) return b.pendingCount - a.pendingCount;
+      return (b.latestExpenseDate ?? "").localeCompare(a.latestExpenseDate ?? "");
+    });
+
+    // Round amounts
+    for (const g of groups) {
+      g.pendingAmount = Math.round(g.pendingAmount * 100) / 100;
+      g.totalAmount = Math.round(g.totalAmount * 100) / 100;
+    }
+
+    const total = groups.length;
+    const safeLimit = Math.min(100, Math.max(1, limit));
+    const safeOffset = (Math.max(1, page) - 1) * safeLimit;
+    return { data: groups.slice(safeOffset, safeOffset + safeLimit), total };
   },
 };

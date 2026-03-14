@@ -11,6 +11,8 @@ import { adminSessionsRoutes } from "../modules/admin/sessions.routes.js";
 import { employeesRoutes } from "../modules/employees/employees.routes.js";
 import { dashboardRoutes } from "../modules/dashboard/dashboard.routes.js";
 import { profileRoutes } from "../modules/profile/profile.routes.js";
+import { adminDashboardRoutes } from "../modules/admin/dashboard.routes.js";
+import { adminMapRoutes } from "../modules/admin/map.routes.js";
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(healthRoutes);
@@ -25,4 +27,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(employeesRoutes);
   await app.register(dashboardRoutes);
   await app.register(profileRoutes);
+  await app.register(adminDashboardRoutes);
+  await app.register(adminMapRoutes);
 }

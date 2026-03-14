@@ -2,9 +2,10 @@
 
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { keepPreviousData } from "@tanstack/react-query";
 import { apiGetPaginated, apiPatch, apiPost } from "@/lib/api/client";
 import { API } from "@/lib/api/endpoints";
-import { Expense, PaginatedResponse, ExpenseStatus } from "@/types";
+import { Expense, PaginatedResponse, ExpenseStatus, EmployeeExpenseSummary } from "@/types";
 
 export interface CreateExpenseBody {
   amount: number;
@@ -89,7 +90,28 @@ export function useUpdateExpenseStatus() {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["orgExpenses"] });
       void client.invalidateQueries({ queryKey: ["orgExpensesAll"] });
+      void client.invalidateQueries({ queryKey: ["expensesSummary"] });
     },
+  });
+}
+
+/**
+ * Fetches expense totals grouped by employee — one row per employee.
+ * Replaces client-side grouping in useAllOrgExpenses for admin views.
+ *
+ * staleTime=30s to avoid over-fetching; admin expense summaries are not
+ * real-time sensitive (auditors review PENDING in batches).
+ */
+export function useExpenseSummaryByEmployee(page: number, limit: number) {
+  return useQuery<PaginatedResponse<EmployeeExpenseSummary>>({
+    queryKey: ["expensesSummary", page, limit],
+    queryFn: () =>
+      apiGetPaginated<EmployeeExpenseSummary>(API.expensesSummary, {
+        page: String(page),
+        limit: String(limit),
+      }),
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 }
 

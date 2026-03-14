@@ -158,6 +158,47 @@ export interface DashboardSummary {
   expensesApproved: number;
 }
 
+// ─── Admin aggregations ───────────────────────────────────────────────────────
+
+/** One row per employee — pending expense summary for the admin expenses page. */
+export interface EmployeeExpenseSummary {
+  employeeId: string;
+  employeeName: string;
+  employeeCode: string | null;
+  pendingCount: number;
+  pendingAmount: number;
+  totalCount: number;
+  totalAmount: number;
+  latestExpenseDate: string | null;
+}
+
+/** Aggregated dashboard data — returned by GET /admin/dashboard. */
+export interface AdminDashboardData {
+  activeEmployeeCount: number;
+  recentEmployeeCount: number;
+  inactiveEmployeeCount: number;
+  todaySessionCount: number;
+  todayDistanceKm: number;
+  pendingExpenseCount: number;
+  pendingExpenseAmount: number;
+}
+
+/**
+ * Map marker entry — returned by GET /admin/monitoring/map.
+ * One row per employee that has at least one recorded GPS point.
+ * `latitude` / `longitude` are the most recent GPS fix for the employee.
+ */
+export interface EmployeeMapMarker {
+  employeeId: string;
+  employeeName: string;
+  employeeCode: string | null;
+  status: ActivityStatus;
+  sessionId: string | null;
+  latitude: number;
+  longitude: number;
+  recordedAt: string;
+}
+
 // ─── Generic API response wrappers ───────────────────────────────────────────
 
 export interface SuccessResponse<T> {
