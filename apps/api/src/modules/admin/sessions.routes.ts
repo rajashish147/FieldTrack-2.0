@@ -11,6 +11,8 @@ const adminSessionsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   status: z.enum(["all", "active", "recent", "inactive"]).default("all"),
+  /** Filter by employee UUID — returns full attendance_sessions history for that employee. */
+  employee_id: z.string().uuid().optional(),
 });
 
 // ─── Response schema ─────────────────────────────────────────────────────────
@@ -81,6 +83,7 @@ export async function adminSessionsRoutes(app: FastifyInstance): Promise<void> {
           parsed.page,
           parsed.limit,
           parsed.status,
+          parsed.employee_id,
         );
         reply
           .status(200)

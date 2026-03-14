@@ -34,6 +34,31 @@ function computeActivityStatus(checkoutAt: string | null): ActivityStatus {
  *   check_in_at   → checkin_at
  *   check_out_at  → checkout_at
  */
+/**
+ * Maps a raw employee_latest_sessions row to the EnrichedAttendanceSession DTO.
+ * Single source of truth for snapshot → API field mapping:
+ *   session_id  → id
+ *   status      → activityStatus
+ *   updated_at  → created_at (snapshot has no created_at column)
+ */
+export function mapLatestSessionRow(row: Record<string, unknown>): EnrichedAttendanceSession {
+  return {
+    id: row.session_id as string | null,
+    employee_id: row.employee_id as string,
+    organization_id: row.organization_id as string,
+    checkin_at: row.checkin_at as string,
+    checkout_at: (row.checkout_at as string | null) ?? null,
+    total_distance_km: (row.total_distance_km as number | null) ?? null,
+    total_duration_seconds: (row.total_duration_seconds as number | null) ?? null,
+    distance_recalculation_status: (row.distance_recalculation_status as string | null) ?? null,
+    created_at: row.updated_at as string,
+    updated_at: row.updated_at as string,
+    employee_code: (row.employee_code as string | null) ?? null,
+    employee_name: (row.employee_name as string | null) ?? null,
+    activityStatus: row.status as ActivityStatus,
+  } as EnrichedAttendanceSession;
+}
+
 export const attendanceRepository = {
   /**
    * Find an open session (no checkout_at) for a specific employee.
@@ -222,23 +247,7 @@ export const attendanceRepository = {
     }
 
     const rows = (data ?? []) as Array<Record<string, unknown>>;
-    const mapped = rows.map((row) => ({
-      id: row.session_id,
-      employee_id: row.employee_id,
-      organization_id: row.organization_id,
-      checkin_at: row.checkin_at,
-      checkout_at: row.checkout_at,
-      total_distance_km: row.total_distance_km,
-      total_duration_seconds: row.total_duration_seconds,
-      distance_recalculation_status: (row.distance_recalculation_status as string | null) ?? null,
-      created_at: row.updated_at, // snapshot table has no created_at; use updated_at
-      updated_at: row.updated_at,
-      employee_code: row.employee_code ?? null,
-      employee_name: row.employee_name ?? null,
-      activityStatus: row.status as ActivityStatus,
-    } as EnrichedAttendanceSession));
-
-    return { data: mapped, total: count ?? 0 };
+    return { data: rows.map(mapLatestSessionRow), total: count ?? 0 };
   },
 
   /**

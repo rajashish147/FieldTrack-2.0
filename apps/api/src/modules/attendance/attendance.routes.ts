@@ -100,11 +100,13 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   );
 
   // Org sessions — ADMIN only
+  // @deprecated Use GET /admin/sessions instead.
   app.get(
     "/attendance/org-sessions",
     {
       schema: {
-        tags: ["admin"],
+        tags: ["deprecated"],
+        description: "Deprecated: use GET /admin/sessions",
         querystring: orgSessionsQuerySchema,
         response: { 200: sessionListResponseSchema.describe("All organization attendance sessions") },
       },

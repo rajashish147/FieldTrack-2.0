@@ -77,12 +77,13 @@ export function useEmployeeSessionHistory(employeeId: string | null) {
   return useQuery<PaginatedResponse<AttendanceSession>>({
     queryKey: ["orgSessionsEmployee", employeeId],
     queryFn: () =>
-      apiGetPaginated<AttendanceSession>(API.orgSessions, {
+      apiGetPaginated<AttendanceSession>(API.adminSessions, {
         employee_id: employeeId!,
         page: "1",
         limit: "100",
       }),
     enabled: !!employeeId,
+    staleTime: 30_000,
   });
 }
 
