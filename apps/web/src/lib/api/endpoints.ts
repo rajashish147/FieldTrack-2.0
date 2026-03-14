@@ -20,7 +20,7 @@ export const API = {
   orgSummary: "/admin/org-summary",
   topPerformers: "/admin/top-performers",
   sessionTrend: "/admin/session-trend",
-  leaderboard: "/admin/leaderboard",
+  leaderboard: "/leaderboard",
 
   // Personal dashboard
   myDashboard: "/dashboard/my-summary",

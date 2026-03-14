@@ -154,4 +154,21 @@ export async function analyticsRoutes(app: FastifyInstance): Promise<void> {
     },
     analyticsController.getLeaderboard,
   );
+
+  // ─── Phase 20b: Public Leaderboard (all authenticated users) ─────────────
+  // Same data as /admin/leaderboard but accessible to EMPLOYEE role too,
+  // so employees can see the org-wide ranking on their dashboard / leaderboard page.
+
+  app.get(
+    "/leaderboard",
+    {
+      schema: {
+        tags: ["analytics"],
+        querystring: leaderboardQuerySchema,
+        response: { 200: leaderboardResponseSchema.describe("Employee leaderboard (tenant-scoped)") },
+      },
+      preValidation: [authenticate],
+    },
+    analyticsController.getLeaderboard,
+  );
 }
