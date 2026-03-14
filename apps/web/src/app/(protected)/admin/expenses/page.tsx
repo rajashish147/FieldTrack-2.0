@@ -86,6 +86,7 @@ export default function AdminExpensesPage() {
         expenses={expenses}
         showActions={true}
         showEmployee={true}
+        isAdmin={true}
         isLoading={isLoading}
         onApprove={(id) => {
           const expense = expenses.find((e) => e.id === id);

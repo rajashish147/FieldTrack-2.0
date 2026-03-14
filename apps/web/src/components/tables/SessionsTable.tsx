@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { AttendanceSession, ActivityStatus } from "@/types";
 import { formatDate, formatTime, formatDistance, formatDuration } from "@/lib/utils";
 import { Clock } from "lucide-react";
+import { EmployeeIdentity } from "@/components/EmployeeIdentity";
 
 interface SessionsTableProps {
   sessions: AttendanceSession[];
@@ -14,6 +15,8 @@ interface SessionsTableProps {
   hasMore?: boolean;
   onPageChange?: (page: number) => void;
   showEmployee?: boolean;
+  /** When true, employee cells get hover quick-actions and click navigation */
+  isAdmin?: boolean;
 }
 
 function ActivityBadge({ status }: { status: ActivityStatus | undefined }) {
@@ -62,20 +65,23 @@ const baseColumns: ColumnDef<AttendanceSession>[] = [
   },
 ];
 
-const employeeColumn: ColumnDef<AttendanceSession> = {
-  key: "employee",
-  title: "Employee",
-  render: (s) => (
-    <div className="flex flex-col">
-      <span className="font-medium text-sm">
-        {s.employee_name ?? `…${s.employee_id.slice(-4)}`}
-      </span>
-      {s.employee_code && (
-        <span className="text-xs text-muted-foreground">{s.employee_code}</span>
-      )}
-    </div>
-  ),
-};
+function buildEmployeeColumn(isAdmin: boolean): ColumnDef<AttendanceSession> {
+  return {
+    key: "employee",
+    title: "Employee",
+    render: (s) => (
+      <EmployeeIdentity
+        employeeId={s.employee_id}
+        name={s.employee_name ?? `#…${s.employee_id.slice(-4)}`}
+        employeeCode={s.employee_code}
+        activityStatus={s.activityStatus}
+        isAdmin={isAdmin}
+        showTooltip={isAdmin}
+        size="sm"
+      />
+    ),
+  };
+}
 
 export function SessionsTable({
   sessions,
@@ -85,9 +91,10 @@ export function SessionsTable({
   hasMore,
   onPageChange,
   showEmployee = false,
+  isAdmin = false,
 }: SessionsTableProps) {
   const columns = showEmployee
-    ? [employeeColumn, ...baseColumns]
+    ? [buildEmployeeColumn(isAdmin), ...baseColumns]
     : baseColumns;
 
   return (

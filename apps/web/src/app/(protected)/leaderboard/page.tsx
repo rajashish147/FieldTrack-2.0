@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useLeaderboard } from "@/hooks/queries/useAnalytics";
 import { useMyProfile } from "@/hooks/queries/useProfile";
+import { useAuth } from "@/hooks/useAuth";
 import { LeaderboardTable } from "@/components/charts/LeaderboardTable";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,6 +32,8 @@ export default function LeaderboardPage() {
   const [metric, setMetric] = useState<Metric>("distance");
   const { data, isLoading, error } = useLeaderboard(metric, 50);
   const { data: profile } = useMyProfile();
+  const { role } = useAuth();
+  const isAdmin = role === "ADMIN";
 
   return (
     <div className="space-y-6">
@@ -112,6 +115,7 @@ export default function LeaderboardPage() {
               data={data ?? []}
               metric={metric}
               highlightEmployeeId={profile?.id}
+              isAdmin={isAdmin}
             />
           )}
         </CardContent>

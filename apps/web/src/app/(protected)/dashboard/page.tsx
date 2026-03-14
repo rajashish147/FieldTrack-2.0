@@ -15,9 +15,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDistance, formatDuration, formatCurrency } from "@/lib/utils";
-import { Activity, MapPin, Clock, Receipt, Users, TrendingUp, Trophy } from "lucide-react";
+import { Activity, MapPin, Clock, Receipt, Users, TrendingUp, Trophy, Zap } from "lucide-react";
 import Link from "next/link";
 import type { OrgSummaryData, DashboardSummary, EmployeeProfileData } from "@/types";
+import { EmployeeIdentity } from "@/components/EmployeeIdentity";
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
@@ -252,13 +253,67 @@ function AdminLeaderboardSection() {
             ))}
           </div>
         ) : (
-          <LeaderboardTable data={data ?? []} metric={metric} />
+          <LeaderboardTable data={data ?? []} metric={metric} isAdmin />
         )}
         <div className="mt-4 text-right">
           <Link href="/leaderboard" className="text-xs text-primary hover:underline">
             View full leaderboard →
           </Link>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Team Activity Widget ─────────────────────────────────────────────────────
+
+function TeamActivityWidget() {
+  const { data, isLoading } = useLeaderboard("sessions", 7);
+
+  return (
+    <Card className="h-full">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          <Zap className="h-4 w-4 text-primary" />
+          Top Performers
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pb-4">
+        {isLoading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-2.5 animate-pulse">
+                <div className="h-8 w-8 rounded-full bg-muted shrink-0" />
+                <div className="space-y-1.5 flex-1">
+                  <div className="h-3 w-24 rounded bg-muted" />
+                  <div className="h-2.5 w-14 rounded bg-muted" />
+                </div>
+                <div className="h-3 w-10 rounded bg-muted" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {(data ?? []).map((entry, idx) => (
+              <div
+                key={entry.employeeId}
+                className="flex items-center justify-between gap-2 rounded-lg hover:bg-accent/50 transition-colors px-1 py-0.5"
+              >
+                <EmployeeIdentity
+                  employeeId={entry.employeeId}
+                  name={entry.employeeName}
+                  employeeCode={entry.employeeCode}
+                  isAdmin
+                  showTooltip={false}
+                  size="sm"
+                />
+                <span className="shrink-0 text-xs font-semibold tabular-nums text-muted-foreground">
+                  {entry.sessions}s
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -302,8 +357,9 @@ function AdminDashboard() {
               </CardContent>
             </Card>
           </div>
-          <div>
+          <div className="flex flex-col gap-5">
             <ActivityStatusCard summary={summary.data} />
+            <TeamActivityWidget />
           </div>
         </div>
       </FadeUp>

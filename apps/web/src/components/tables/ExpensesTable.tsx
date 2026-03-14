@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Expense, ExpenseStatus } from "@/types";
 import { formatDate, formatCurrency } from "@/lib/utils";
 import { Receipt } from "lucide-react";
+import { EmployeeIdentity } from "@/components/EmployeeIdentity";
 
 interface ExpensesTableProps {
   expenses: Expense[];
@@ -17,6 +18,8 @@ interface ExpensesTableProps {
   hasMore?: boolean;
   onPageChange?: (page: number) => void;
   showEmployee?: boolean;
+  /** When true, employee cells get hover quick-actions and click navigation */
+  isAdmin?: boolean;
 }
 
 function StatusBadge({ status }: { status: ExpenseStatus }) {
@@ -25,29 +28,32 @@ function StatusBadge({ status }: { status: ExpenseStatus }) {
   return <Badge variant="warning">Pending</Badge>;
 }
 
-const employeeColumn: ColumnDef<Expense> = {
-  key: "employee",
-  title: "Employee",
-  render: (e) => (
-    <div className="flex flex-col">
-      <span className="font-medium text-sm">
-        {e.employee_name ?? "—"}
-      </span>
-      {e.employee_code && (
-        <span className="text-xs text-muted-foreground">{e.employee_code}</span>
-      )}
-    </div>
-  ),
-};
+function buildEmployeeColumn(isAdmin: boolean): ColumnDef<Expense> {
+  return {
+    key: "employee",
+    title: "Employee",
+    render: (e) => (
+      <EmployeeIdentity
+        employeeId={e.employee_id}
+        name={e.employee_name ?? "—"}
+        employeeCode={e.employee_code}
+        isAdmin={isAdmin}
+        showTooltip={isAdmin}
+        size="sm"
+      />
+    ),
+  };
+}
 
 function buildColumns(
   showActions: boolean,
   showEmployee: boolean,
+  isAdmin: boolean,
   onApprove?: (id: string) => void,
   onReject?: (id: string) => void
 ): ColumnDef<Expense>[] {
   const base: ColumnDef<Expense>[] = [
-    ...(showEmployee ? [employeeColumn] : []),
+    ...(showEmployee ? [buildEmployeeColumn(isAdmin)] : []),
     {
       key: "created_at",
       title: "Date",
@@ -114,8 +120,9 @@ export function ExpensesTable({
   hasMore,
   onPageChange,
   showEmployee = false,
+  isAdmin = false,
 }: ExpensesTableProps) {
-  const columns = buildColumns(showActions, showEmployee, onApprove, onReject);
+  const columns = buildColumns(showActions, showEmployee, isAdmin, onApprove, onReject);
 
   return (
     <DataTable
