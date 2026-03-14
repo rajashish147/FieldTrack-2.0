@@ -5,10 +5,13 @@ import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { useAnimatedNumber } from "@/hooks/useAnimatedNumber";
 
 interface MetricCardProps {
   title: string;
   value: string | number;
+  /** When provided the displayed value animates from 0 → this number. */
+  numericValue?: number;
   icon: React.ReactNode;
   description?: string;
   trend?: { value: number; label: string };
@@ -20,6 +23,7 @@ interface MetricCardProps {
 export function MetricCard({
   title,
   value,
+  numericValue,
   icon,
   description,
   trend,
@@ -27,6 +31,9 @@ export function MetricCard({
   isLoading = false,
   className,
 }: MetricCardProps) {
+  const animated = useAnimatedNumber(numericValue ?? 0);
+  const displayValue = numericValue !== undefined ? animated : value;
+
   if (isLoading) {
     return (
       <Card className={cn("relative overflow-hidden", className)}>
@@ -76,7 +83,7 @@ export function MetricCard({
               highlighted && "text-primary"
             )}
           >
-            {value}
+            {displayValue}
           </div>
           {description && (
             <p className="mt-1 text-xs text-muted-foreground">{description}</p>
@@ -96,4 +103,15 @@ export function MetricCard({
       </Card>
     </motion.div>
   );
+}
+
+interface MetricCardProps {
+  title: string;
+  value: string | number;
+  icon: React.ReactNode;
+  description?: string;
+  trend?: { value: number; label: string };
+  highlighted?: boolean;
+  isLoading?: boolean;
+  className?: string;
 }
