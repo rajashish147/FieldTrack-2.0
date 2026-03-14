@@ -1,24 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
-import { useOrgSummary, useSessionTrend, useLeaderboard } from "@/hooks/queries/useAnalytics";
+import { useOrgSummary, useLeaderboard } from "@/hooks/queries/useAnalytics";
 import { useMyDashboard } from "@/hooks/queries/useDashboard";
 import { useMyProfile } from "@/hooks/queries/useProfile";
+import { useOrgSessions } from "@/hooks/queries/useSessions";
+import { useOrgExpenses } from "@/hooks/queries/useExpenses";
 import { MetricCard } from "@/components/MetricCard";
-import { SessionTrendChart } from "@/components/charts/SessionTrendChart";
 import { LeaderboardTable } from "@/components/charts/LeaderboardTable";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { EmptyState } from "@/components/EmptyState";
 import { StaggerList, StaggerItem, FadeUp } from "@/components/motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDistance, formatDuration, formatCurrency } from "@/lib/utils";
-import { Activity, MapPin, Clock, Receipt, Users, TrendingUp, Trophy, Zap } from "lucide-react";
+import { formatDistance, formatDuration, formatCurrency, formatTime } from "@/lib/utils";
+import { Activity, MapPin, Clock, Receipt, Users, Trophy, Zap } from "lucide-react";
 import Link from "next/link";
 import type { OrgSummaryData, DashboardSummary, EmployeeProfileData } from "@/types";
 import { EmployeeIdentity } from "@/components/EmployeeIdentity";
+import { cn } from "@/lib/utils";
+import { todayRange } from "@/lib/dateRange";
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
@@ -87,14 +91,14 @@ function AdminHeroCard({
                 <p className="text-3xl font-extrabold tabular-nums">
                   {(summary?.totalSessions ?? 0).toLocaleString()}
                 </p>
-                <p className="mt-0.5 text-xs font-medium text-white/60">Sessions</p>
+                <p className="mt-0.5 text-xs font-medium text-white/60">Sessions today</p>
               </div>
               <div className="h-10 w-px bg-white/20" />
               <div className="text-center">
                 <p className="text-2xl font-extrabold">
                   {summary ? formatDistance(summary.totalDistanceKm) : "—"}
                 </p>
-                <p className="mt-0.5 text-xs font-medium text-white/60">Distance</p>
+                <p className="mt-0.5 text-xs font-medium text-white/60">Distance today</p>
               </div>
             </>
           )}
@@ -109,30 +113,30 @@ function AdminHeroCard({
 function OrgSummarySection({ summary, isLoading }: { summary?: OrgSummaryData; isLoading: boolean }) {
   const cards = [
     {
-      title: "Total Sessions",
+      title: "Sessions Today",
       value: summary?.totalSessions.toLocaleString() ?? "—",
       numericValue: summary?.totalSessions,
       icon: <Activity className="h-4 w-4" />,
     },
     {
-      title: "Total Distance",
+      title: "Distance Today",
       value: summary ? formatDistance(summary.totalDistanceKm) : "—",
       icon: <MapPin className="h-4 w-4" />,
     },
     {
-      title: "Total Duration",
+      title: "Duration Today",
       value: summary ? formatDuration(summary.totalDurationSeconds) : "—",
       icon: <Clock className="h-4 w-4" />,
     },
     {
-      title: "Active Employees",
+      title: "Active Now",
       value: summary?.activeEmployeesCount.toLocaleString() ?? "—",
       numericValue: summary?.activeEmployeesCount,
       icon: <Users className="h-4 w-4" />,
       highlighted: true,
     },
     {
-      title: "Approved Expenses",
+      title: "Expenses Today",
       value: summary ? formatCurrency(summary.approvedExpenseAmount) : "—",
       icon: <Receipt className="h-4 w-4" />,
     },
@@ -224,16 +228,16 @@ function ActivityStatusCard({ summary }: { summary?: OrgSummaryData }) {
 
 type LeaderboardMetric = "distance" | "sessions" | "duration" | "expenses";
 
-function AdminLeaderboardSection() {
+function AdminLeaderboardSection({ from, to }: { from: string; to: string }) {
   const [metric, setMetric] = useState<LeaderboardMetric>("distance");
-  const { data, isLoading, error } = useLeaderboard(metric, 10);
+  const { data, isLoading, error } = useLeaderboard(metric, 10, from, to);
 
   return (
     <Card>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle className="flex items-center gap-2">
           <Trophy className="h-5 w-5 text-amber-500" />
-          Employee Leaderboard
+          Top Performers Today
         </CardTitle>
         <Tabs value={metric} onValueChange={(v) => setMetric(v as LeaderboardMetric)}>
           <TabsList className="h-8">
@@ -267,8 +271,131 @@ function AdminLeaderboardSection() {
 
 // ─── Team Activity Widget ─────────────────────────────────────────────────────
 
-function TeamActivityWidget() {
-  const { data, isLoading } = useLeaderboard("sessions", 7);
+// ─── Today Activity Feed ──────────────────────────────────────────────────────
+
+type FeedIcon = "checkin" | "checkout" | "expense";
+type FeedEntry = {
+  id: string;
+  name: string;
+  action: string;
+  time: string;
+  ts: number;
+  icon: FeedIcon;
+};
+
+function TodayActivityFeed() {
+  const sessions = useOrgSessions(1, 20);
+  const expenses = useOrgExpenses(1, 10);
+
+  const today = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
+
+  const feed = useMemo<FeedEntry[]>(() => {
+    const entries: FeedEntry[] = [];
+
+    for (const s of sessions.data?.data ?? []) {
+      const t = new Date(s.checkin_at);
+      if (t < today) continue;
+      entries.push({
+        id: s.id,
+        name: s.employee_name ?? "Unknown",
+        action: s.checkout_at ? "completed a session" : "checked in",
+        time: formatTime(s.checkin_at),
+        ts: t.getTime(),
+        icon: s.checkout_at ? "checkout" : "checkin",
+      });
+    }
+
+    for (const e of expenses.data?.data ?? []) {
+      const t = new Date(e.submitted_at);
+      if (t < today) continue;
+      entries.push({
+        id: e.id,
+        name: e.employee_name ?? "Unknown",
+        action: `submitted ${formatCurrency(e.amount)} expense`,
+        time: formatTime(e.submitted_at),
+        ts: t.getTime(),
+        icon: "expense",
+      });
+    }
+
+    return entries.sort((a, b) => b.ts - a.ts).slice(0, 10);
+  }, [sessions.data, expenses.data, today]);
+
+  const isLoading = sessions.isLoading || expenses.isLoading;
+
+  return (
+    <Card className="h-full">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          <Activity className="h-4 w-4 text-primary" />
+          Today&apos;s Activity
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pb-5">
+        {isLoading ? (
+          <div className="space-y-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex items-start gap-3 animate-pulse">
+                <div className="h-8 w-8 rounded-full bg-muted shrink-0" />
+                <div className="space-y-1.5 flex-1 pt-1">
+                  <div className="h-3 w-3/4 rounded bg-muted" />
+                  <div className="h-2.5 w-1/3 rounded bg-muted" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : feed.length === 0 ? (
+          <EmptyState
+            icon={Activity}
+            title="No activity yet today"
+            description="Field activity will appear here as employees check in."
+          />
+        ) : (
+          <div className="space-y-3">
+            {feed.map((entry, idx) => (
+              <motion.div
+                key={entry.id}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.2, delay: idx * 0.04 }}
+                className="flex items-start gap-3"
+              >
+                <div
+                  className={cn(
+                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                    entry.icon === "checkin" && "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600",
+                    entry.icon === "checkout" && "bg-blue-100 dark:bg-blue-950/40 text-blue-600",
+                    entry.icon === "expense" && "bg-amber-100 dark:bg-amber-950/40 text-amber-600",
+                  )}
+                >
+                  {entry.icon === "checkin" && <MapPin className="h-3.5 w-3.5" />}
+                  {entry.icon === "checkout" && <Activity className="h-3.5 w-3.5" />}
+                  {entry.icon === "expense" && <Receipt className="h-3.5 w-3.5" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm leading-snug">
+                    <span className="font-semibold">{entry.name}</span>{" "}
+                    <span className="text-muted-foreground">{entry.action}</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground/70 mt-0.5">{entry.time}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Team Activity Widget ─────────────────────────────────────────────────────
+
+function TeamActivityWidget({ from, to }: { from: string; to: string }) {
+  const { data, isLoading } = useLeaderboard("sessions", 7, from, to);
 
   return (
     <Card className="h-full">
@@ -322,8 +449,8 @@ function TeamActivityWidget() {
 // ─── Admin dashboard ──────────────────────────────────────────────────────────
 
 function AdminDashboard() {
-  const summary = useOrgSummary();
-  const sessionTrend = useSessionTrend();
+  const { from, to } = useMemo(() => todayRange(), []);
+  const summary = useOrgSummary(from, to);
 
   return (
     <div className="space-y-5">
@@ -332,41 +459,25 @@ function AdminDashboard() {
       {/* Hero banner */}
       <AdminHeroCard summary={summary.data} isLoading={summary.isLoading} />
 
-      {/* Metrics row */}
+      {/* Today's metrics row */}
       <OrgSummarySection summary={summary.data} isLoading={summary.isLoading} />
 
-      {/* Trend chart + Activity status */}
+      {/* Today's activity feed + Live status */}
       <FadeUp delay={0.15}>
         <div className="grid gap-5 lg:grid-cols-3">
           <div className="lg:col-span-2">
-            <Card className="h-full">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <TrendingUp className="h-5 w-5 text-primary" />
-                  Session Trend
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {sessionTrend.isLoading ? (
-                  <Skeleton className="h-[280px] w-full" />
-                ) : sessionTrend.error ? (
-                  <ErrorBanner error={sessionTrend.error} />
-                ) : (
-                  <SessionTrendChart data={sessionTrend.data ?? []} />
-                )}
-              </CardContent>
-            </Card>
+            <TodayActivityFeed />
           </div>
           <div className="flex flex-col gap-5">
             <ActivityStatusCard summary={summary.data} />
-            <TeamActivityWidget />
+            <TeamActivityWidget from={from} to={to} />
           </div>
         </div>
       </FadeUp>
 
-      {/* Leaderboard */}
+      {/* Today's leaderboard */}
       <FadeUp delay={0.25}>
-        <AdminLeaderboardSection />
+        <AdminLeaderboardSection from={from} to={to} />
       </FadeUp>
     </div>
   );
