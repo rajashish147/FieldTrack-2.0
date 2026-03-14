@@ -6,6 +6,8 @@ export const API = {
   // Sessions (attendance)
   sessions: "/attendance/my-sessions",
   orgSessions: "/attendance/org-sessions",
+  /** Snapshot-backed endpoint — one row per employee, O(employees) read. */
+  adminSessions: "/admin/sessions",
 
   // Locations (GPS route)
   route: "/locations/my-route",

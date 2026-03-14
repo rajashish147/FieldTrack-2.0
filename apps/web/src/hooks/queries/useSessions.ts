@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useInfiniteQuery, keepPreviousData } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { apiGetPaginated } from "@/lib/api/client";
 import { API } from "@/lib/api/endpoints";
@@ -40,10 +40,12 @@ export function useAllOrgSessions() {
   const query = useInfiniteQuery<PaginatedResponse<AttendanceSession>, Error, AttendanceSession[], [string], number>({
     queryKey: ["orgSessionsAll"],
     queryFn: ({ pageParam }) =>
-      apiGetPaginated<AttendanceSession>(API.orgSessions, {
+      apiGetPaginated<AttendanceSession>(API.adminSessions, {
         page: String(pageParam),
         limit: "50",
       }),
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
     initialPageParam: 1,
     getNextPageParam: (lastPage, allPages) => {
       const fetched = allPages.reduce((sum, p) => sum + p.data.length, 0);

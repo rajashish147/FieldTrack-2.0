@@ -7,6 +7,7 @@ import { locationsRoutes } from "../modules/locations/locations.routes.js";
 import { expensesRoutes } from "../modules/expenses/expenses.routes.js";
 import { analyticsRoutes } from "../modules/analytics/analytics.routes.js";
 import { monitoringRoutes } from "../modules/admin/monitoring.routes.js";
+import { adminSessionsRoutes } from "../modules/admin/sessions.routes.js";
 import { employeesRoutes } from "../modules/employees/employees.routes.js";
 import { dashboardRoutes } from "../modules/dashboard/dashboard.routes.js";
 import { profileRoutes } from "../modules/profile/profile.routes.js";
@@ -20,6 +21,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(expensesRoutes);
   await app.register(analyticsRoutes);
   await app.register(monitoringRoutes);
+  await app.register(adminSessionsRoutes);
   await app.register(employeesRoutes);
   await app.register(dashboardRoutes);
   await app.register(profileRoutes);
