@@ -18,6 +18,8 @@ vi.mock("../../../src/plugins/prometheus.js", () => ({
   analyticsJobsTotal: { labels: vi.fn().mockReturnValue({ inc: vi.fn() }) },
   analyticsJobDurationSeconds: { observe: vi.fn() },
   analyticsQueueDepthGauge: { set: vi.fn() },
+  analyticsJobFailuresTotal: { inc: vi.fn() },
+  analyticsJobRetriesTotal: { inc: vi.fn() },
   securityRateLimitHits: { inc: vi.fn() },
   securityAuthBruteforce: { labels: vi.fn().mockReturnValue({ inc: vi.fn() }) },
 }));
@@ -31,6 +33,35 @@ vi.mock("bullmq", () => ({
     on: vi.fn(),
     close: vi.fn(),
   })),
+  // Queue is imported by analytics.queue.ts; analytics.queue.ts itself is mocked
+  // below so Queue is never instantiated during this unit test.
+  Queue: vi.fn().mockImplementation(() => ({
+    add: vi.fn().mockResolvedValue(undefined),
+    getWaitingCount: vi.fn().mockResolvedValue(0),
+    getActiveCount: vi.fn().mockResolvedValue(0),
+    getCompletedCount: vi.fn().mockResolvedValue(0),
+    getFailedCount: vi.fn().mockResolvedValue(0),
+    on: vi.fn(),
+    close: vi.fn(),
+  })),
+}));
+
+// Mock analytics.queue.ts so Queue constructors never run in this unit test.
+// The worker imports moveToDeadLetter from this module; the mock makes it a
+// resolvable spy without touching Redis or BullMQ.
+vi.mock("../../../src/workers/analytics.queue.js", () => ({
+  enqueueAnalyticsJob: vi.fn().mockResolvedValue(undefined),
+  moveToDeadLetter: vi.fn().mockResolvedValue(undefined),
+  analyticsQueue: {
+    getWaitingCount: vi.fn().mockResolvedValue(0),
+    getActiveCount: vi.fn().mockResolvedValue(0),
+    getCompletedCount: vi.fn().mockResolvedValue(0),
+    getFailedCount: vi.fn().mockResolvedValue(0),
+  },
+  analyticsFailedQueue: {
+    getWaitingCount: vi.fn().mockResolvedValue(0),
+    getFailedCount: vi.fn().mockResolvedValue(0),
+  },
 }));
 
 import { supabaseServiceClient as supabase } from "../../../src/config/supabase.js";

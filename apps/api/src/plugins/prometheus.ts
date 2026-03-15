@@ -105,6 +105,31 @@ export const analyticsQueueDepthGauge = new client.Gauge({
   },
 });
 
+// ─── Phase 22: Analytics Reliability Metrics ──────────────────────────────────
+
+/**
+ * Counts analytics jobs that permanently failed after exhausting all retry
+ * attempts.  Used in the Prometheus alert rule `AnalyticsJobFailuresHigh`.
+ * Distinct from `analyticsJobsTotal{status="failed"}` so the alert expression
+ * stays clean and does not conflate partial retries with permanent failures.
+ */
+export const analyticsJobFailuresTotal = new client.Counter({
+  name: "analytics_job_failures_total",
+  help: "Total number of analytics jobs that permanently failed after all retries",
+  registers: [register],
+});
+
+/**
+ * Counts each retry attempt of an analytics job (i.e. every non-first attempt).
+ * Useful for spotting whether a class of sessions is consistently bouncing
+ * before eventually succeeding or failing permanently.
+ */
+export const analyticsJobRetriesTotal = new client.Counter({
+  name: "analytics_job_retries_total",
+  help: "Total number of analytics job retry attempts (attempt > 0)",
+  registers: [register],
+});
+
 const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.addHook("onRequest", async (request) => {
     request.startTime = process.hrtime();

@@ -7,6 +7,7 @@ import { env } from "./config/env.js";
 import { getLoggerConfig } from "./config/logger.js";
 import { registerJwt } from "./plugins/jwt.js";
 import { registerRoutes } from "./routes/index.js";
+import { adminQueuesRoutes } from "./modules/admin/queues.routes.js";
 import { startDistanceWorker } from "./workers/distance.worker.js";
 import { startAnalyticsWorker } from "./workers/analytics.worker.js";
 import { AppError } from "./utils/errors.js";
@@ -160,6 +161,12 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Register routes
   await registerRoutes(app);
+
+  // Phase 22: Admin queue monitoring endpoint — registered outside registerRoutes
+  // so integration tests (which call registerRoutes directly) are not affected.
+  // Requires Redis to be available; the queue objects are already instantiated at
+  // module load time by analytics.queue.ts and distance.queue.ts.
+  await app.register(adminQueuesRoutes);
 
   // Phase 10: Start BullMQ distance worker on boot.
   // The worker runs its own Redis-backed event loop — no blocking here.

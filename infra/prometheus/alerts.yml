@@ -69,6 +69,18 @@ groups:
     annotations:
       summary: "Queue backlog high"
 
+  # Phase 22: Fire if more than 5 analytics jobs permanently fail within 5 minutes.
+  # This indicates a systemic problem (bad DB schema change, Supabase outage, etc.)
+  # that retries alone cannot recover from — requires operator intervention.
+  - alert: AnalyticsJobFailuresHigh
+    expr: increase(analytics_job_failures_total[5m]) > 5
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Analytics jobs failing at high rate"
+      description: "More than 5 analytics jobs permanently failed (exhausted all retries) in the last 5 minutes. Check the analytics-failed dead letter queue and worker logs."
+
 # ---------------------------------------------------------
 # REDIS ALERTS
 # ---------------------------------------------------------

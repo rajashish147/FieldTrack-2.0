@@ -1,6 +1,17 @@
 import { Queue } from "bullmq";
 import { redisConnectionOptions } from "../config/redis.js";
 
+// ─── Dead Letter Queue Payload ────────────────────────────────────────────────
+
+export interface AnalyticsFailedJobData {
+  /** Original job payload that permanently failed. */
+  originalData: AnalyticsJobData;
+  /** ISO timestamp of when the job was moved to the dead letter queue. */
+  failedAt: string;
+  /** Error message from the final failed attempt. */
+  reason: string;
+}
+
 // ─── Job Payload Shape ────────────────────────────────────────────────────────
 
 export interface AnalyticsJobData {
@@ -27,10 +38,18 @@ export interface AnalyticsJobData {
  * Deduplication: jobId = `analytics:<sessionId>` ensures that duplicate
  * enqueue calls for the same session (e.g. retry of the checkout endpoint)
  * produce only a single job in the queue.
+ *
+ * Rate limiter: caps throughput at 50 jobs/second to protect the database
+ * from spikes during bulk checkout events or backfill runs.
  */
 const analyticsQueue = new Queue<AnalyticsJobData>("analytics", {
   connection: redisConnectionOptions,
   defaultJobOptions: {
+    // Phase 22: 10 s delay so the distance worker has time to write its result
+    // before the analytics worker picks up the job.  The distance worker
+    // typically finishes within 5 s; the extra margin prevents the first
+    // retry from being wasted on a still-pending distance calculation.
+    delay: 10_000,
     attempts: 3,
     backoff: {
       type: "exponential",
@@ -41,6 +60,44 @@ const analyticsQueue = new Queue<AnalyticsJobData>("analytics", {
   },
 });
 
+// ─── Dead Letter Queue ────────────────────────────────────────────────────────
+
+/**
+ * Phase 22: Dedicated dead letter queue for analytics jobs that exhausted all
+ * retry attempts.  Jobs here need manual operator review / replay.
+ *
+ * Retention: keep the last 500 failed jobs indefinitely for inspection.
+ * Operators can manually re-enqueue via the /admin/queues stats endpoint or
+ * directly via BullMQ tooling.
+ */
+// NameType is pinned to the literal "dead-letter" so Queue.add() is type-safe
+// in BullMQ v5, which uses ExtractNameType to derive the allowed job name.
+export const analyticsFailedQueue = new Queue<AnalyticsFailedJobData, void, "dead-letter">(
+  "analytics-failed",
+  {
+    connection: redisConnectionOptions,
+    defaultJobOptions: {
+      removeOnComplete: { count: 500 },
+      removeOnFail: false,
+    },
+  },
+);
+
+/**
+ * Move a permanently failed analytics job to the dead letter queue.
+ * Safe to call from the worker's `failed` event handler.
+ */
+export async function moveToDeadLetter(
+  jobData: AnalyticsJobData,
+  reason: string,
+): Promise<void> {
+  await analyticsFailedQueue.add("dead-letter", {
+    originalData: jobData,
+    failedAt: new Date().toISOString(),
+    reason,
+  });
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -48,6 +105,10 @@ const analyticsQueue = new Queue<AnalyticsJobData>("analytics", {
  *
  * Idempotent: duplicate calls for the same sessionId are silently ignored by
  * BullMQ because the jobId is deterministic (analytics:<sessionId>).
+ *
+ * The 10 s delay (inherited from defaultJobOptions) is intentional: it ensures
+ * the distance worker has finished writing total_distance_km before the analytics
+ * worker picks up the job, avoiding a wasted first attempt and retry.
  */
 export async function enqueueAnalyticsJob(
   sessionId: string,
@@ -67,6 +128,23 @@ export async function enqueueAnalyticsJob(
  */
 export async function getAnalyticsQueueDepth(): Promise<number> {
   return analyticsQueue.getWaitingCount();
+}
+
+/**
+ * Returns queue stat counts for both the main analytics queue and the dead
+ * letter queue.  Used by the /admin/queues monitoring endpoint.
+ */
+export async function getAnalyticsQueueStats() {
+  const [waiting, active, completed, failed, dlqWaiting, dlqFailed] =
+    await Promise.all([
+      analyticsQueue.getWaitingCount(),
+      analyticsQueue.getActiveCount(),
+      analyticsQueue.getCompletedCount(),
+      analyticsQueue.getFailedCount(),
+      analyticsFailedQueue.getWaitingCount(),
+      analyticsFailedQueue.getFailedCount(),
+    ]);
+  return { waiting, active, completed, failed, dlq: { waiting: dlqWaiting, failed: dlqFailed } };
 }
 
 export { analyticsQueue };

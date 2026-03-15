@@ -43,6 +43,7 @@ export async function adminSessionsRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       try {
         const parsed = adminSessionsQuerySchema.parse(request.query);
+        const t0 = Date.now();
         const result = await attendanceService.getOrgSessions(
           request,
           parsed.page,
@@ -50,6 +51,13 @@ export async function adminSessionsRoutes(app: FastifyInstance): Promise<void> {
           parsed.status,
           parsed.employee_id,
         );
+        const durationMs = Date.now() - t0;
+        if (durationMs > 100) {
+          request.log.warn(
+            { route: "/admin/sessions", queryName: "getOrgSessions", durationMs },
+            "slow DB query",
+          );
+        }
         reply
           .status(200)
           .send(paginated(result.data, parsed.page, parsed.limit, result.total));

@@ -7,8 +7,11 @@ import { invalidateOrgAnalytics } from "../utils/cache.js";
 import {
   analyticsJobsTotal,
   analyticsJobDurationSeconds,
+  analyticsJobFailuresTotal,
+  analyticsJobRetriesTotal,
 } from "../plugins/prometheus.js";
 import type { AnalyticsJobData } from "./analytics.queue.js";
+import { moveToDeadLetter } from "./analytics.queue.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -68,6 +71,13 @@ export async function processAnalyticsJob(
     { jobId, sessionId, employeeId, organizationId, attempt: job.attemptsMade },
     "Analytics worker: picked up job",
   );
+
+  // Phase 22: Track retries — any attempt after the first is a retry.
+  // This counter drives the analytics_job_retries_total Prometheus metric used
+  // on the worker health Grafana panel.
+  if (job.attemptsMade > 0) {
+    analyticsJobRetriesTotal.inc();
+  }
 
   // ── Step 1: Fetch session — verify checkout + distance are available ────────
 
@@ -289,10 +299,21 @@ export function startAnalyticsWorker(app: FastifyInstance): Worker | null {
   // Fired only after ALL retry attempts are exhausted — job will not be retried.
   worker.on("failed", (job: Job<AnalyticsJobData> | undefined, err: Error) => {
     analyticsJobsTotal.labels("failed").inc();
+    // Phase 22: Dedicated permanent-failure counter used by the Prometheus alert rule.
+    analyticsJobFailuresTotal.inc();
     app.log.error(
       { jobId: job?.id, sessionId: job?.data.sessionId, err },
       "Analytics worker: job permanently failed after all retries",
     );
+    // Phase 22: Move to dead letter queue for operator review / manual replay.
+    if (job?.data) {
+      moveToDeadLetter(job.data, err.message).catch((dlqErr: unknown) => {
+        app.log.error(
+          { jobId: job.id, dlqErr },
+          "Analytics worker: failed to move job to dead letter queue",
+        );
+      });
+    }
   });
 
   app.log.info(
