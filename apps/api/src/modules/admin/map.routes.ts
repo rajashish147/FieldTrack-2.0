@@ -38,13 +38,16 @@ export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
       try {
         const orgId = request.organizationId;
 
-        // Step 1 — fetch snapshot (all employees, ordered ACTIVE → RECENT → INACTIVE).
-        // Join employees to get name/code — employee_latest_sessions does not store
-        // these columns directly; they live on the employees table.
+        // Step 1 — fetch snapshot for ACTIVE and RECENT employees only.
+        // Showing all 5000+ INACTIVE employees on a live map is not useful and
+        // would send thousands of session IDs in the GPS IN-clause, overflowing
+        // PostgREST's URL length limit. The monitoring map shows employees who
+        // are currently working or recently active.
         const { data: snapshots, error: snapError } = await supabase
           .from("employee_latest_sessions")
           .select("employee_id, organization_id, session_id, status, employees!employee_latest_sessions_employee_id_fkey(name, employee_code)")
           .eq("organization_id", orgId)
+          .in("status", ["ACTIVE", "RECENT"])
           .order("status", { ascending: true });
 
         if (snapError) {
