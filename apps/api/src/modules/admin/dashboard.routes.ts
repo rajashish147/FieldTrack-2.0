@@ -28,19 +28,20 @@ interface DashboardSnapshot {
 /**
  * GET /admin/dashboard
  *
- * Phase 24: O(1) database access.
+ * Phase 24 (revised): three independent Redis-cached calls in parallel.
  *
- * Hot path (cache hit): zero DB queries — serve from Redis in < 1 ms.
+ * Hot path (all caches warm): 3 × ~2ms Redis GETs  → assembled in < 10 ms.
  *
- * Cold path (cache miss):
- *   1. ONE indexed primary-key lookup → org_dashboard_snapshot
- *   2. Session trend  (separate Redis cache, 5-min TTL)
- *   3. Leaderboard    (separate Redis cache, 5-min TTL)
+ * Cold path per component:
+ *   snapshot  (60 s TTL)  → ONE indexed PK lookup on org_dashboard_snapshot
+ *   sessionTrend (5 min)  → org_daily_metrics query (analyticsService)
+ *   leaderboard  (5 min)  → employee_daily_metrics query (analyticsService)
  *
- * The snapshot is kept current by the analytics worker, which upserts a row
- * after every session checkout.  The Redis layer (60 s) absorbs high-frequency
- * polling.  Cache invalidation is handled by invalidateOrgAnalytics() which now
- * also clears the `org:{id}:dashboard` key.
+ * Running them in parallel means a full cold start completes in max(each cold
+ * path) ≈ 200 ms rather than 200 + 200 + 400 ms = 800 ms sequentially.
+ *
+ * Cache invalidation: invalidateOrgAnalytics() clears all three keys when the
+ * analytics worker completes after a session checkout.
  */
 export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> {
   app.get(
@@ -60,61 +61,59 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
         const thirtyDaysAgo = new Date(`${todayDateStr}T00:00:00Z`);
         thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 30);
 
-        // Phase 24 cache key — covered by invalidateOrgAnalytics() which also
-        // deletes this key. Short TTL of 60 s absorbs load between worker cycles.
-        const result = await getCached<AdminDashboardData>(
-          `org:${orgId}:dashboard`,
-          DASHBOARD_CACHE_TTL,
-          async () => {
-            // ── ONE DB query: primary-key lookup on org_dashboard_snapshot ──────
-            const { data: snapshotData, error: snapshotError } = await supabase
-              .from("org_dashboard_snapshot")
-              .select(
-                "active_employee_count, recent_employee_count, inactive_employee_count, " +
-                "active_employees_today, today_session_count, today_distance_km, " +
-                "pending_expense_count, pending_expense_amount",
-              )
-              .eq("organization_id", orgId)
-              .maybeSingle();
+        // All three run in parallel — each has its own Redis cache so a miss
+        // on one does not stall the others.
+        const [snap, sessionTrend, leaderboard] = await Promise.all([
+          // 1. Snapshot: single PK lookup, 60-second TTL.
+          getCached<DashboardSnapshot | null>(
+            `org:${orgId}:dashboard:snap`,
+            DASHBOARD_CACHE_TTL,
+            async () => {
+              const { data, error } = await supabase
+                .from("org_dashboard_snapshot")
+                .select(
+                  "active_employee_count, recent_employee_count, inactive_employee_count, " +
+                  "active_employees_today, today_session_count, today_distance_km, " +
+                  "pending_expense_count, pending_expense_amount",
+                )
+                .eq("organization_id", orgId)
+                .maybeSingle();
 
-            if (snapshotError) {
-              throw new Error(
-                `Dashboard: snapshot query failed: ${snapshotError.message}`,
-              );
-            }
+              if (error) {
+                throw new Error(
+                  `Dashboard: snapshot query failed: ${error.message}`,
+                );
+              }
+              return data as DashboardSnapshot | null;
+            },
+          ),
+          // 2 & 3. Analytics — each has its own 5-min Redis cache inside the service.
+          analyticsService.getSessionTrend(
+            request,
+            sevenDaysAgo.toISOString(),
+            undefined,
+          ),
+          analyticsService.getLeaderboard(
+            request,
+            "distance",
+            thirtyDaysAgo.toISOString(),
+            undefined,
+            5,
+          ),
+        ]);
 
-            const snap = snapshotData as DashboardSnapshot | null;
-
-            // ── Two analytics calls (each independently Redis-cached at 5 min) ─
-            const [sessionTrend, leaderboard] = await Promise.all([
-              analyticsService.getSessionTrend(
-                request,
-                sevenDaysAgo.toISOString(),
-                undefined,
-              ),
-              analyticsService.getLeaderboard(
-                request,
-                "distance",
-                thirtyDaysAgo.toISOString(),
-                undefined,
-                5,
-              ),
-            ]);
-
-            return {
-              activeEmployeeCount:    snap?.active_employee_count    ?? 0,
-              recentEmployeeCount:    snap?.recent_employee_count    ?? 0,
-              inactiveEmployeeCount:  snap?.inactive_employee_count  ?? 0,
-              activeEmployeesToday:   snap?.active_employees_today   ?? 0,
-              todaySessionCount:      snap?.today_session_count      ?? 0,
-              todayDistanceKm:        snap?.today_distance_km        ?? 0,
-              pendingExpenseCount:    snap?.pending_expense_count    ?? 0,
-              pendingExpenseAmount:   Number(snap?.pending_expense_amount ?? 0),
-              sessionTrend,
-              leaderboard,
-            } satisfies AdminDashboardData;
-          },
-        );
+        const result: AdminDashboardData = {
+          activeEmployeeCount:    snap?.active_employee_count    ?? 0,
+          recentEmployeeCount:    snap?.recent_employee_count    ?? 0,
+          inactiveEmployeeCount:  snap?.inactive_employee_count  ?? 0,
+          activeEmployeesToday:   snap?.active_employees_today   ?? 0,
+          todaySessionCount:      snap?.today_session_count      ?? 0,
+          todayDistanceKm:        snap?.today_distance_km        ?? 0,
+          pendingExpenseCount:    snap?.pending_expense_count    ?? 0,
+          pendingExpenseAmount:   Number(snap?.pending_expense_amount ?? 0),
+          sessionTrend,
+          leaderboard,
+        };
 
         reply.status(200).send(ok(result));
       } catch (error) {

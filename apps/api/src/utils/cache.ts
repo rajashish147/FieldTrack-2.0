@@ -72,9 +72,8 @@ export const ANALYTICS_CACHE_TTL = 300;
  * server is never blocked on a large keyspace. Non-fatal: errors are swallowed
  * so a Redis outage never prevents checkout or expense creation from completing.
  *
- * Also explicitly deletes the `org:{orgId}:dashboard` key written by the
- * Phase 24 single-query dashboard route (different prefix, not covered by the
- * analytics SCAN pattern).
+ * Also explicitly deletes the dashboard snapshot key and sweeps the sessions
+ * cache so that admin polling always reflects the most recent checkout state.
  *
  * Call this after:
  *  - Session checkout (distance worker completion)
@@ -82,26 +81,38 @@ export const ANALYTICS_CACHE_TTL = 300;
  */
 export async function invalidateOrgAnalytics(orgId: string): Promise<void> {
   try {
+    // Helper: SCAN a Redis key pattern and delete all matching keys.
+    const scanAndDelete = async (pattern: string): Promise<void> => {
+      let cursor = "0";
+      do {
+        const [nextCursor, keys] = await cacheClient.scan(
+          cursor,
+          "MATCH",
+          pattern,
+          "COUNT",
+          100,
+        );
+        cursor = nextCursor;
+        if (keys.length > 0) {
+          await cacheClient.del(...keys);
+        }
+      } while (cursor !== "0");
+    };
+
     // 1. Pattern sweep: clears trend, leaderboard, summary, and any other
     //    analytics keys stored under org:{orgId}:analytics:*.
-    const pattern = `org:${orgId}:analytics:*`;
-    let cursor = "0";
-    do {
-      const [nextCursor, keys] = await cacheClient.scan(
-        cursor,
-        "MATCH",
-        pattern,
-        "COUNT",
-        100,
-      );
-      cursor = nextCursor;
-      if (keys.length > 0) {
-        await cacheClient.del(...keys);
-      }
-    } while (cursor !== "0");
+    await scanAndDelete(`org:${orgId}:analytics:*`);
 
-    // 2. Explicit delete: Phase 24 dashboard snapshot cache key.
-    await cacheClient.del(`org:${orgId}:dashboard`);
+    // 2. Sessions cache — org:{orgId}:sessions:{page}:{limit}:{status}:{empId}
+    await scanAndDelete(`org:${orgId}:sessions:*`);
+
+    // 3. Explicit deletes for dashboard keys.
+    //    org:{orgId}:dashboard:snap — Phase 24 (revised) snapshot-only cache key.
+    //    org:{orgId}:dashboard      — Phase 24 original key (belt-and-suspenders).
+    await cacheClient.del(
+      `org:${orgId}:dashboard:snap`,
+      `org:${orgId}:dashboard`,
+    );
   } catch {
     // Non-fatal — Redis outage must not block business operations
   }

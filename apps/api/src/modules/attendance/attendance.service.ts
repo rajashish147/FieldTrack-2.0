@@ -2,6 +2,7 @@ import type { FastifyRequest } from "fastify";
 import { attendanceRepository } from "./attendance.repository.js";
 import { enqueueDistanceJob } from "../../workers/distance.queue.js";
 import { enqueueAnalyticsJob } from "../../workers/analytics.queue.js";
+import { getCached } from "../../utils/cache.js";
 import {
   EmployeeAlreadyCheckedIn,
   SessionAlreadyClosed,
@@ -112,9 +113,15 @@ export const attendanceService = {
     status: string = "all",
     employeeId?: string,
   ): Promise<{ data: EnrichedAttendanceSession[]; total: number }> {
+    // 30-second cache absorbs high-frequency admin polling without stale data
+    // risk (session status changes happen at most every few minutes in practice).
+    // The cache is cleared by invalidateOrgAnalytics() on every checkout.
+    const cacheKey = `org:${request.organizationId}:sessions:${page}:${limit}:${status}:${employeeId ?? "all"}`;
     if (employeeId) {
-      return attendanceRepository.findSessionsByUser(request, employeeId, page, limit);
+      return getCached(cacheKey, 30, () =>
+        attendanceRepository.findSessionsByUser(request, employeeId, page, limit));
     }
-    return attendanceRepository.findLatestSessionPerEmployee(request, page, limit, status);
+    return getCached(cacheKey, 30, () =>
+      attendanceRepository.findLatestSessionPerEmployee(request, page, limit, status));
   },
 };

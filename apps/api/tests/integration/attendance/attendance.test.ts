@@ -9,6 +9,15 @@ vi.mock("../../../src/config/redis.js", () => ({
   redisClient: { on: vi.fn(), quit: vi.fn(), disconnect: vi.fn() },
 }));
 
+// attendanceService.getOrgSessions now uses getCached — bypass Redis in tests.
+vi.mock("../../../src/utils/cache.js", () => ({
+  getCached: vi.fn().mockImplementation(
+    (_key: string, _ttl: number, fn: () => Promise<unknown>) => fn(),
+  ),
+  invalidateOrgAnalytics: vi.fn().mockResolvedValue(undefined),
+  ANALYTICS_CACHE_TTL: 300,
+}));
+
 vi.mock("../../../src/workers/distance.queue.js", () => ({
   enqueueDistanceJob: vi.fn().mockResolvedValue(undefined),
 }));
