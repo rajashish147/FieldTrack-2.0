@@ -98,7 +98,7 @@ describe("expensesService.updateExpenseStatus()", () => {
     const result = await expensesService.updateExpenseStatus(
       makeFakeRequest(),
       EXPENSE_ID,
-      { status: "REJECTED" },
+      { status: "REJECTED", rejection_comment: "test rejection reason" },
     );
     expect(result.status).toBe("REJECTED");
   });
@@ -112,6 +112,7 @@ describe("expensesService.updateExpenseStatus()", () => {
       EXPENSE_ID,
       "APPROVED",
       ADMIN_ID,
+      undefined,
     );
   });
 

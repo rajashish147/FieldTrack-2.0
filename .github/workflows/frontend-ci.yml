@@ -1,0 +1,55 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "apps/web/**"
+      - "packages/types/**"
+      - ".github/workflows/frontend-ci.yml"
+  pull_request:
+    branches: [master, main]
+    paths:
+      - "apps/web/**"
+      - "packages/types/**"
+
+concurrency:
+  group: frontend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Type-check, lint & test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Build shared types
+        run: npm run build -w packages/types
+
+      - name: TypeScript type-check (web)
+        run: npm run type-check -w apps/web
+
+      - name: ESLint (web)
+        run: npm run lint -w apps/web
+
+      - name: Run unit tests
+        run: npm run test -w apps/web
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: apps/web/coverage/
+          retention-days: 7

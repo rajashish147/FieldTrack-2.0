@@ -126,7 +126,7 @@ describe("Employees Integration Tests", () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it("returns 400 when employee_code is missing", async () => {
+    it("returns 201 when employee_code is omitted (auto-generated)", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/admin/employees",
@@ -136,7 +136,7 @@ describe("Employees Integration Tests", () => {
         },
         body: JSON.stringify({ name: "Bob" }),
       });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(201);
     });
 
     it("returns 400 when user_id is not a valid UUID", async () => {

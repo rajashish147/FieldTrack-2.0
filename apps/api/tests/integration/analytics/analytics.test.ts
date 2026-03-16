@@ -142,19 +142,8 @@ describe("Analytics Integration Tests", () => {
     });
 
     it("returns 200 with org summary for admin", async () => {
-      vi.mocked(analyticsRepository.getSessionsInRange).mockResolvedValue([
-        {
-          id: "s1",
-          employee_id: TEST_EMPLOYEE_ID,
-          total_distance_km: 100,
-          total_duration_seconds: 7200,
-        },
-        {
-          id: "s2",
-          employee_id: TEST_EMPLOYEE_ID,
-          total_distance_km: 45.3,
-          total_duration_seconds: 18000,
-        },
+      vi.mocked(analyticsRepository.getOrgDailyMetrics).mockResolvedValue([
+        { date: "2026-03-01", sessions: 2, distance: 145.3, duration: 25200 },
       ] as never);
       vi.mocked(analyticsRepository.getExpensesInRange).mockResolvedValue([
         { amount: 620, status: "APPROVED" },
@@ -185,7 +174,7 @@ describe("Analytics Integration Tests", () => {
     });
 
     it("returns 200 with empty data when no sessions exist", async () => {
-      vi.mocked(analyticsRepository.getSessionsInRange).mockResolvedValue([]);
+      vi.mocked(analyticsRepository.getOrgDailyMetrics).mockResolvedValue([] as never);
       vi.mocked(analyticsRepository.getExpensesInRange).mockResolvedValue([]);
       vi.mocked(analyticsRepository.getActiveEmployeesCount).mockResolvedValue(0);
 
@@ -216,6 +205,9 @@ describe("Analytics Integration Tests", () => {
       vi.mocked(analyticsRepository.getExpensesInRange).mockResolvedValue([]);
       vi.mocked(analyticsRepository.getActiveEmployeesCount).mockResolvedValue(0);
 
+      vi.mocked(analyticsRepository.getOrgDailyMetrics).mockResolvedValue([] as never);
+      vi.mocked(analyticsRepository.getExpensesInRange).mockResolvedValue([]);
+      vi.mocked(analyticsRepository.getActiveEmployeesCount).mockResolvedValue(0);
       // The token carries org B's ID — response is 200 but query is org-B scoped
       const res = await app.inject({
         method: "GET",
