@@ -36,6 +36,23 @@ export function useOrgExpenses(page: number, limit: number) {
 }
 
 /**
+ * Fetches org expenses for a specific employee — used in the admin expense
+ * review sheet so individual expense rows load on-demand instead of bulk-fetching.
+ */
+export function useEmployeeOrgExpenses(employeeId: string | null, page = 1, limit = 50) {
+  return useQuery<PaginatedResponse<Expense>>({
+    queryKey: ["orgExpenses", "employee", employeeId, page, limit],
+    queryFn: () =>
+      apiGetPaginated<Expense>(API.orgExpenses, {
+        employee_id: employeeId!,
+        page: String(page),
+        limit: String(limit),
+      }),
+    enabled: !!employeeId,
+  });
+}
+
+/**
  * Fetches ALL org expenses across all pages (limit=100 per page).
  * Auto-fetches subsequent pages until the entire dataset is loaded.
  * Returns a flat array of all expenses for client-side grouping.

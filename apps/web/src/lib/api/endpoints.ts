@@ -35,6 +35,13 @@ export const API = {
 
   // Employee management
   createEmployee: "/admin/employees",
+  listEmployees: "/admin/employees",
+  getEmployee: (id: string) => `/admin/employees/${id}`,
+  updateEmployee: (id: string) => `/admin/employees/${id}`,
+  setEmployeeStatus: (id: string) => `/admin/employees/${id}/status`,
+
+  // CSV export
+  exportExpenses: "/admin/expenses/export",
 
   // Profile
   myProfile: "/profile/me",
@@ -47,4 +54,10 @@ export const API = {
   adminDashboard: "/admin/dashboard",
   /** Latest GPS position per employee for map rendering. */
   adminMap: "/admin/monitoring/map",
+  /** BullMQ queue stats for analytics and distance queues (ADMIN only). */
+  adminQueues: "/admin/queues",
+  /** SSE stream for real-time org events (ADMIN only). */
+  adminEvents: "/admin/events",
+  /** GPS playback points for a specific session. */
+  sessionLocations: (id: string) => `/admin/sessions/${id}/locations`,
 } as const;

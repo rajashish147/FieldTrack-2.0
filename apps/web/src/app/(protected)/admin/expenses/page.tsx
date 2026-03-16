@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
-import { useAllOrgExpenses, useUpdateExpenseStatus } from "@/hooks/queries/useExpenses";
+import { useExpenseSummaryByEmployee, useEmployeeOrgExpenses, useUpdateExpenseStatus } from "@/hooks/queries/useExpenses";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { EmployeeIdentity } from "@/components/EmployeeIdentity";
 import { Badge } from "@/components/ui/badge";
@@ -15,63 +15,14 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/use-toast";
-import { Expense, ExpenseStatus } from "@/types";
+import { Expense, ExpenseStatus, EmployeeExpenseSummary } from "@/types";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { Receipt, ChevronRight, CheckCircle2, XCircle, ExternalLink } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const VIEW_PAGE_SIZE = 25;
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface EmployeeExpenseGroup {
-  employeeId: string;
-  employeeName: string;
-  employeeCode: string | null;
-  pendingCount: number;
-  pendingAmount: number;
-  latestExpenseDate: string;
-  expenses: Expense[];
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function groupExpenses(expenses: Expense[]): EmployeeExpenseGroup[] {
-  const map = new Map<string, Expense[]>();
-  for (const e of expenses) {
-    const arr = map.get(e.employee_id) ?? [];
-    arr.push(e);
-    map.set(e.employee_id, arr);
-  }
-
-  const groups: EmployeeExpenseGroup[] = [];
-  for (const [empId, empExpenses] of map) {
-    const sorted = [...empExpenses].sort(
-      (a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime()
-    );
-    const latest = sorted[0];
-    const pending = sorted.filter((e) => e.status === "PENDING");
-    groups.push({
-      employeeId: empId,
-      employeeName: latest.employee_name ?? `Employee …${empId.slice(-4)}`,
-      employeeCode: latest.employee_code ?? null,
-      pendingCount: pending.length,
-      pendingAmount: pending.reduce((sum, e) => sum + e.amount, 0),
-      latestExpenseDate: latest.submitted_at,
-      expenses: sorted,
-    });
-  }
-
-  // Employees with PENDING expenses first, then by most recent activity
-  groups.sort((a, b) => {
-    if (b.pendingCount !== a.pendingCount) return b.pendingCount - a.pendingCount;
-    return new Date(b.latestExpenseDate).getTime() - new Date(a.latestExpenseDate).getTime();
-  });
-
-  return groups;
-}
+const PAGE_SIZE = 50;
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -96,103 +47,121 @@ function ExpenseStatusBadge({ status }: { status: ExpenseStatus }) {
 }
 
 function ExpenseReviewSheet({
-  group,
+  summary,
   onClose,
   onAction,
   isPending,
 }: {
-  group: EmployeeExpenseGroup | null;
+  summary: EmployeeExpenseSummary | null;
   onClose: () => void;
   onAction: (expense: Expense, status: ExpenseStatus) => void;
   isPending: boolean;
 }) {
+  // Load individual expenses for the selected employee on-demand.
+  // This avoids the bulk-fetch-all-expenses pattern — only this employee's
+  // expenses are loaded when the review sheet opens.
+  const { data: expensesPage, isLoading: expensesLoading } = useEmployeeOrgExpenses(
+    summary?.employeeId ?? null,
+    1,
+    100,
+  );
+  const expenses = expensesPage?.data ?? [];
+
   return (
-    <Sheet open={!!group} onOpenChange={(open) => !open && onClose()}>
+    <Sheet open={!!summary} onOpenChange={(open) => !open && onClose()}>
       <SheetContent side="right" className="w-full sm:max-w-[480px] p-0 flex flex-col">
-        {group && (
+        {summary && (
           <>
             <SheetHeader className="px-6 py-5 border-b shrink-0">
               <SheetTitle className="sr-only">Expense Review</SheetTitle>
               <EmployeeIdentity
-                employeeId={group.employeeId}
-                name={group.employeeName}
-                employeeCode={group.employeeCode}
+                employeeId={summary.employeeId}
+                name={summary.employeeName}
+                employeeCode={summary.employeeCode}
                 isAdmin
                 showTooltip={false}
                 size="md"
               />
               <p className="text-sm text-muted-foreground mt-1">
-                {group.pendingCount > 0
-                  ? `${group.pendingCount} pending · ${formatCurrency(group.pendingAmount)}`
+                {summary.pendingCount > 0
+                  ? `${summary.pendingCount} pending · ${formatCurrency(summary.pendingAmount)}`
                   : "No pending expenses"}
               </p>
             </SheetHeader>
 
             <div className="flex-1 overflow-y-auto divide-y">
-              {group.expenses.map((expense) => (
-                <div
-                  key={expense.id}
-                  className={cn(
-                    "px-6 py-4 space-y-3",
-                    expense.status === "PENDING" && "bg-amber-50/50 dark:bg-amber-950/20"
-                  )}
-                >
-                  {/* Header row */}
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-0.5 min-w-0">
-                      <p className="font-medium text-sm truncate">{expense.description}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Submitted {formatDate(expense.submitted_at)}
-                        {expense.reviewed_at && ` · Reviewed ${formatDate(expense.reviewed_at)}`}
-                      </p>
-                    </div>
-                    <div className="text-right shrink-0 space-y-1">
-                      <p className="font-semibold text-sm tabular-nums">
-                        {formatCurrency(expense.amount)}
-                      </p>
-                      <ExpenseStatusBadge status={expense.status} />
-                    </div>
-                  </div>
-
-                  {/* Receipt link */}
-                  {expense.receipt_url && (
-                    <a
-                      href={expense.receipt_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                      View receipt
-                    </a>
-                  )}
-
-                  {/* Approve / Reject actions */}
-                  {expense.status === "PENDING" && (
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
-                        onClick={() => onAction(expense, "APPROVED")}
-                        disabled={isPending}
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="flex-1 border-rose-300 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30"
-                        onClick={() => onAction(expense, "REJECTED")}
-                        disabled={isPending}
-                      >
-                        <XCircle className="h-3.5 w-3.5 mr-1.5" />
-                        Reject
-                      </Button>
-                    </div>
-                  )}
+              {expensesLoading ? (
+                <div className="space-y-3 p-6">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="h-20 w-full animate-pulse rounded-lg bg-muted" />
+                  ))}
                 </div>
-              ))}
+              ) : (
+                expenses.map((expense) => (
+                  <div
+                    key={expense.id}
+                    className={cn(
+                      "px-6 py-4 space-y-3",
+                      expense.status === "PENDING" && "bg-amber-50/50 dark:bg-amber-950/20"
+                    )}
+                  >
+                    {/* Header row */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-0.5 min-w-0">
+                        <p className="font-medium text-sm truncate">{expense.description}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Submitted {formatDate(expense.submitted_at)}
+                          {expense.reviewed_at && ` · Reviewed ${formatDate(expense.reviewed_at)}`}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0 space-y-1">
+                        <p className="font-semibold text-sm tabular-nums">
+                          {formatCurrency(expense.amount)}
+                        </p>
+                        <ExpenseStatusBadge status={expense.status} />
+                      </div>
+                    </div>
+
+                    {/* Receipt link */}
+                    {expense.receipt_url && (
+                      <a
+                        href={expense.receipt_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        View receipt
+                      </a>
+                    )}
+
+                    {/* Approve / Reject actions */}
+                    {expense.status === "PENDING" && (
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                          onClick={() => onAction(expense, "APPROVED")}
+                          disabled={isPending}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 border-rose-300 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                          onClick={() => onAction(expense, "REJECTED")}
+                          disabled={isPending}
+                        >
+                          <XCircle className="h-3.5 w-3.5 mr-1.5" />
+                          Reject
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           </>
         )}
@@ -205,7 +174,7 @@ function EmployeeExpenseRow({
   group,
   onClick,
 }: {
-  group: EmployeeExpenseGroup;
+  group: EmployeeExpenseSummary;
   onClick: () => void;
 }) {
   const hasPending = group.pendingCount > 0;
@@ -250,7 +219,7 @@ function EmployeeExpenseRow({
       </div>
 
       <div className="text-sm text-muted-foreground">
-        {formatDate(group.latestExpenseDate)}
+        {group.latestExpenseDate ? formatDate(group.latestExpenseDate) : "—"}
       </div>
 
       <ChevronRight className="h-4 w-4 text-muted-foreground" />
@@ -265,28 +234,28 @@ export default function AdminExpensesPage() {
   const router = useRouter();
   const { toast } = useToast();
 
-  const [selectedGroup, setSelectedGroup] = useState<EmployeeExpenseGroup | null>(null);
+  const [selectedSummary, setSelectedSummary] = useState<EmployeeExpenseSummary | null>(null);
   const [viewPage, setViewPage] = useState(1);
 
   useEffect(() => {
     if (!permissions.manageExpenses) router.replace("/sessions");
   }, [permissions, router]);
 
-  const { data: allExpenses, isLoading, error, refetch } = useAllOrgExpenses();
+  // Server-aggregated: one row per employee, already sorted with pending-first.
+  // O(employees) vs O(all expenses) — no client-side grouping required.
+  const { data: summaryPage, isLoading, error, refetch } = useExpenseSummaryByEmployee(viewPage, PAGE_SIZE);
   const updateStatus = useUpdateExpenseStatus();
-  const groups = useMemo(() => groupExpenses(allExpenses), [allExpenses]);
 
-  // Keep the open sheet in sync with fresh data after mutations
-  const refreshedGroup = useMemo(() => {
-    if (!selectedGroup) return null;
-    return groups.find((g) => g.employeeId === selectedGroup.employeeId) ?? null;
-  }, [groups, selectedGroup]);
-
-  const displayGroup = refreshedGroup ?? selectedGroup;
-
-  const paged = groups.slice(0, viewPage * VIEW_PAGE_SIZE);
-  const hasMore = paged.length < groups.length;
+  const groups = summaryPage?.data ?? [];
+  const totalGroups = summaryPage?.pagination.total ?? 0;
+  const hasMore = groups.length > 0 && totalGroups > viewPage * PAGE_SIZE;
   const pendingEmployees = groups.filter((g) => g.pendingCount > 0).length;
+
+  // Keep the open sheet in sync: re-fetch on mutation success is handled by
+  // useUpdateExpenseStatus's onSuccess cache invalidation.
+  const refreshedSummary = selectedSummary
+    ? (groups.find((g) => g.employeeId === selectedSummary.employeeId) ?? selectedSummary)
+    : null;
 
   if (!permissions.manageExpenses) return null;
 
@@ -320,7 +289,7 @@ export default function AdminExpensesPage() {
           <p className="text-muted-foreground">
             {isLoading
               ? "Loading..."
-              : `${groups.length} employees · ${
+              : `${totalGroups} employees · ${
                   pendingEmployees > 0
                     ? `${pendingEmployees} require${pendingEmployees === 1 ? "s" : ""} attention`
                     : "all clear"
@@ -383,11 +352,11 @@ export default function AdminExpensesPage() {
         {!isLoading && groups.length > 0 && (
           <div className="divide-y">
             <AnimatePresence initial={false}>
-              {paged.map((group) => (
+              {groups.map((group) => (
                 <EmployeeExpenseRow
                   key={group.employeeId}
                   group={group}
-                  onClick={() => setSelectedGroup(group)}
+                  onClick={() => setSelectedSummary(group)}
                 />
               ))}
             </AnimatePresence>
@@ -398,7 +367,7 @@ export default function AdminExpensesPage() {
                   onClick={() => setViewPage((p) => p + 1)}
                   className="text-sm text-primary hover:underline"
                 >
-                  Load more ({groups.length - paged.length} remaining)
+                  Load more ({totalGroups - groups.length} remaining)
                 </button>
               </div>
             )}
@@ -408,8 +377,8 @@ export default function AdminExpensesPage() {
 
       {/* Expense review slide-in panel */}
       <ExpenseReviewSheet
-        group={displayGroup}
-        onClose={() => setSelectedGroup(null)}
+        summary={refreshedSummary}
+        onClose={() => setSelectedSummary(null)}
         onAction={handleAction}
         isPending={updateStatus.isPending}
       />

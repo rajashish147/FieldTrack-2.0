@@ -3,13 +3,17 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { CookieOptions } from "@supabase/ssr";
 
 /**
- * Auth middleware.
- * Runs on every matched route and redirects unauthenticated users to /login.
+ * Auth + role middleware.
+ * Runs on every matched route and:
+ *  1. Redirects unauthenticated users to /login.
+ *  2. Enforces role-based access for /admin routes — ADMIN role required.
+ *     Employees attempting to access /admin are redirected to /sessions.
  *
  * Public routes (no auth required):
  *   /login, /_next/*, /favicon.ico, static assets
  *
- * All other routes require a valid Supabase session.
+ * Role-protected routes:
+ *   /admin/** → requires role = "ADMIN" in user_metadata
  */
 export async function middleware(request: NextRequest) {
   const response = NextResponse.next({
@@ -61,6 +65,18 @@ export async function middleware(request: NextRequest) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
+  }
+
+  // Role-based protection for /admin routes.
+  // The role is stored in user_metadata (set by the backend when creating users).
+  // This prevents non-admin users from ever rendering admin pages — not just from
+  // reaching the API. The API enforces role independently at every endpoint.
+  if (pathname.startsWith("/admin")) {
+    const role = session.user?.user_metadata?.role as string | undefined;
+    if (role !== "ADMIN") {
+      // Redirect employees and unknown roles away from admin pages.
+      return NextResponse.redirect(new URL("/sessions", request.url));
+    }
   }
 
   return response;

@@ -6,6 +6,15 @@
  *
  * Dates are computed in the browser's local timezone so that "today" means
  * the calendar day the user experiences, regardless of server timezone.
+ *
+ * ── UTC Server Policy ─────────────────────────────────────────────────────────
+ * The FieldTrack API stores all timestamps in UTC and aggregates daily metrics
+ * using UTC midnight boundaries. When the frontend sends `from`/`to` strings
+ * the API strips them to YYYY-MM-DD (UTC date) before querying daily_metrics.
+ * For global orgs operating across multiple timezones this means the "week"
+ * and "month" boundaries seen by the API may differ by up to ±14 hours from
+ * the local-timezone boundaries used here. This is an acceptable trade-off
+ * for the current use-case; per-org timezone support is tracked separately.
  */
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -71,6 +80,20 @@ export function lastMonthRange(): DateRange {
   const start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
   const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
   return { from: start.toISOString(), to: end.toISOString() };
+}
+
+/**
+ * Current ISO week: Monday 00:00 → now (local timezone).
+ * ISO week starts on Monday (day 1). If today is Sunday (day 0), we look back 6 days.
+ * Mirrors the backend's getWeekStartDate() UTC Monday so analytics numbers
+ * are consistent when the browser and server are in similar timezones.
+ */
+export function thisWeekRange(): DateRange {
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+  const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysFromMonday, 0, 0, 0, 0);
+  return { from: monday.toISOString(), to: now.toISOString() };
 }
 
 /** Resolve a named preset to a concrete DateRange. */
