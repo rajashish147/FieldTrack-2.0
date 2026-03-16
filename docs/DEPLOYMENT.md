@@ -19,7 +19,7 @@ The `vps-setup.sh` script handles the full first-time setup of a fresh VPS:
 
 ```bash
 # Copy the script to the VPS and run as root
-scp backend/scripts/vps-setup.sh root@your-server:/tmp/
+scp apps/api/scripts/vps-setup.sh root@your-server:/tmp/
 ssh root@your-server 'bash /tmp/vps-setup.sh'
 ```
 
@@ -45,50 +45,42 @@ REPO_URL="https://github.com/your-username/FieldTrack-2.0.git"
 
 ---
 
-## CI/CD Setup
+## API Deployment
+1. SSH into VPS
+2. Run `apps/api/scripts/vps-setup.sh` from workspace root
+3. Set `.env` and `.env.monitoring` in workspace root
+4. Start monitoring stack: `docker-compose -f infra/docker-compose.monitoring.yml up -d`
+5. Deploy API: `apps/api/scripts/deploy-bluegreen.sh`
+6. Confirm readiness: `curl https://<domain>/ready`
+7. Confirm Prometheus target status is UP
 
-The GitHub Actions workflow at `.github/workflows/deploy.yml` handles automated deployment on every push to `master`.
+## Web Deployment
+1. Set `.env` in workspace root
+2. Deploy web: `cd apps/web && npm run build && npm run start`
 
-### Required GitHub Secrets
+## Rollback
+1. API: `apps/api/scripts/rollback.sh`
+2. Web: `apps/web/scripts/rollback.sh`
 
-Configure these in your repository: **Settings → Secrets and variables → Actions**
+## Monitoring
+1. Set `.env.monitoring` in workspace root
+2. Start stack: `docker-compose -f infra/docker-compose.monitoring.yml up -d`
+3. Grafana: `http://<domain>:3000`
+4. Prometheus: `http://<domain>:9090`
+5. Loki: `http://<domain>:3100`
+6. Tempo: `http://<domain>:3200`
 
-| Secret | Description |
-|--------|-------------|
-| `DO_HOST` | VPS IP address or hostname |
-| `DO_USER` | SSH username on the VPS |
-| `DO_SSH_KEY` | Private SSH key with access to the VPS |
+## Nginx
+1. Config: `infra/nginx/fieldtrack.conf`
+2. Canonical path: `/etc/nginx/conf.d/fieldtrack.conf`
+3. TLS bootstrap: two-stage via Certbot
 
-`GITHUB_TOKEN` is provided automatically by GitHub Actions — no manual setup required.
-
-### Pipeline Flow
-
-```
-Push to master
-      │
-      ▼
-┌─────────────────────┐
-│  test job           │
-│  1. npm ci          │
-│  2. tsc --noEmit    │
-│  3. npm run test    │
-└──────┬──────────────┘
-       │ passes
-       ▼
-┌──────────────────────────────────────────┐
-│  build-and-deploy job                    │
-│  1. Docker Buildx (GHA cache)            │
-│  2. Push to GHCR (SHA tag + latest tag)  │
-│  3. SSH → VPS → deploy-bluegreen.sh      │
-└──────────────────────────────────────────┘
-```
-
-Build-and-deploy is skipped on pull requests — only the `test` job runs, acting as a PR gate.
-
----
-
-## Blue-Green Deployment
-
+## Troubleshooting
+1. Logs: `infra/promtail/promtail.yml`
+2. Alerts: `infra/prometheus/alerts.yml`
+3. Config: `infra/prometheus/prometheus.yml`
+4. Grafana dashboards: `infra/grafana/dashboards/`
+5. Nginx config: `infra/nginx/fieldtrack.conf`
 The deployment uses a blue-green strategy for zero-downtime releases.
 
 ### How It Works
@@ -99,7 +91,7 @@ On each deploy:
 
 1. The new image is pulled from GHCR
 2. The **inactive** container is replaced with the new image
-3. Health checks poll `GET /health` until the new container is ready (up to 60 s)
+3. Readiness checks poll `GET /ready` until the new container is ready (up to 60 s)
 4. Nginx upstream is switched to the new container (`nginx -s reload`)
 5. The previously active container is stopped and removed
 6. The deployed SHA is prepended to `.deploy_history` (keeps last 5)
@@ -108,7 +100,7 @@ On each deploy:
 
 ```bash
 # SSH into the VPS
-cd /path/to/FieldTrack-2.0/backend
+cd /home/ashish/FieldTrack-2.0/apps/api
 
 # Deploy a specific image SHA (e.g. from CI output)
 ./scripts/deploy-bluegreen.sh a4f91c2
@@ -124,7 +116,7 @@ cd /path/to/FieldTrack-2.0/backend
 To instantly revert to the previous deployment:
 
 ```bash
-cd /path/to/FieldTrack-2.0/backend
+cd /home/ashish/FieldTrack-2.0/apps/api
 ./scripts/rollback.sh
 ```
 
@@ -168,9 +160,9 @@ The pre-built Grafana dashboard (`infra/grafana/dashboards/fieldtrack.json`) is 
 
 ## Environment Variables
 
-Copy `backend/.env.example` to `backend/.env` on the VPS and fill in all values before the first deploy.
+Copy `apps/api/.env.example` to `apps/api/.env` on the VPS and fill in all values before the first deploy.
 
-See [backend/README.md](../backend/README.md) for the full variable reference.
+See [apps/api/README.md](../apps/api/README.md) for the full variable reference.
 
 ---
 
@@ -183,7 +175,7 @@ curl https://yourdomain.com/health
 # {"status":"ok","timestamp":"2026-03-10T12:00:00.000Z"}
 ```
 
-The deployment script uses this endpoint to validate readiness before switching Nginx traffic.
+The deployment script now uses `/ready` to validate dependency readiness before switching Nginx traffic.
 
 ---
 
