@@ -3,7 +3,9 @@ server:
   grpc_listen_port: 0
 
 positions:
-  filename: /data/promtail-positions.yaml
+  # Persisted to the promtail_data volume — survives container restarts.
+  # Must NOT use /tmp (ephemeral) so log offsets are never lost.
+  filename: /data/positions.yaml
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
@@ -49,3 +51,12 @@ scrape_configs:
 
       - labels:
           level:
+
+  - job_name: syslog
+
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: syslog
+          __path__: /var/log/*.log

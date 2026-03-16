@@ -13,14 +13,29 @@ APP_PORT=3000
 
 NETWORK="fieldtrack_network"
 
+# Resolve paths relative to this script so the deploy script works
+# regardless of the working directory it is invoked from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
 ENV_FILE="/home/ashish/FieldTrack-2.0/apps/api/.env"
 NGINX_CONF="/etc/nginx/sites-enabled/fieldtrack.conf"
+NGINX_TEMPLATE="$REPO_DIR/infra/nginx/fieldtrack.conf"
 ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
 DEPLOY_HISTORY="/home/ashish/FieldTrack-2.0/apps/api/.deploy_history"
 MAX_HISTORY=5
 
 MAX_HEALTH_ATTEMPTS=20
 HEALTH_INTERVAL=3
+
+# ---------------------------------------------------------------------------
+# Pre-flight: require API_DOMAIN to be set in the calling environment.
+# Without it we cannot render a valid nginx config.
+# ---------------------------------------------------------------------------
+if [ -z "${API_DOMAIN:-}" ]; then
+    echo "ERROR: API_DOMAIN is not set. Deployment aborted."
+    exit 1
+fi
 
 echo "========================================="
 echo "FieldTrack Blue-Green Deployment Started"
@@ -98,13 +113,32 @@ echo "Health check passed."
 
 echo "[5/7] Switching nginx upstream..."
 
-# Only the upstream block's server directive changes.
-# This is a single, precise substitution.
-sudo sed -i "s|server 127.0.0.1:$ACTIVE_PORT;|server 127.0.0.1:$INACTIVE_PORT;|" "$NGINX_CONF"
+NGINX_BACKUP="${NGINX_CONF}.bak.$(date +%s)"
+NGINX_TMP="$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)"
 
-echo "[6/7] Reloading nginx..."
+# Generate a fresh nginx config from the repo template.
+# Only __BACKEND_PORT__ and __API_DOMAIN__ are substituted — nothing else.
+sed \
+    -e "s|__BACKEND_PORT__|$INACTIVE_PORT|g" \
+    -e "s|__API_DOMAIN__|$API_DOMAIN|g" \
+    "$NGINX_TEMPLATE" > "$NGINX_TMP"
 
-sudo nginx -t
+# Save the current live config so we can restore it if validation fails.
+sudo cp "$NGINX_CONF" "$NGINX_BACKUP"
+
+# Install the generated config.
+sudo cp "$NGINX_TMP" "$NGINX_CONF"
+rm -f "$NGINX_TMP"
+
+echo "[6/7] Validating and reloading nginx..."
+
+if ! sudo nginx -t 2>&1; then
+    echo "ERROR: nginx configuration test failed. Restoring backup..."
+    sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
+    echo "Backup restored. Deployment aborted."
+    exit 1
+fi
+
 sudo systemctl reload nginx
 
 # Persist new active slot so the next deploy reads it correctly
@@ -131,4 +165,27 @@ else
 fi
 
 echo "Deployment history updated: $IMAGE_SHA"
+
+# ---------------------------------------------------------------------------
+# Monitoring stack: only restart when infra configs have actually changed.
+# Hash covers all infra config files except nginx (nginx is rerendered on
+# every deploy above and does not require a monitoring restart).
+# ---------------------------------------------------------------------------
+echo "[monitoring] Checking monitoring stack configuration..."
+MONITORING_HASH=$(find "$REPO_DIR/infra" \
+    -not -path "$REPO_DIR/infra/nginx/*" \
+    \( -name '*.yml' -o -name '*.yaml' -o -name '*.conf' -o -name '*.toml' -o -name '*.json' \) \
+    | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
+MONITORING_HASH_FILE="$HOME/.fieldtrack-monitoring-hash"
+if [ -f "$MONITORING_HASH_FILE" ] && [ "$(cat "$MONITORING_HASH_FILE")" = "$MONITORING_HASH" ]; then
+    echo "[monitoring] Configuration unchanged — skipping restart."
+else
+    echo "[monitoring] Configuration changed — restarting monitoring stack..."
+    docker compose \
+        -f "$REPO_DIR/infra/docker-compose.monitoring.yml" \
+        --env-file "$REPO_DIR/infra/.env.monitoring" \
+        up -d --remove-orphans
+    echo "$MONITORING_HASH" > "$MONITORING_HASH_FILE"
+    echo "[monitoring] Monitoring stack restarted."
+fi
 
