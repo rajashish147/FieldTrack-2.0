@@ -8,7 +8,7 @@ Thank you for your interest in contributing. This document explains the workflow
 
 ### Prerequisites
 
-- Node.js ≥ 20
+- Node.js ≥ 24
 - npm
 - Redis (for integration tests that use BullMQ)
 - A Supabase project (for full integration runs) — test suite mocks the DB layer so Supabase is not required for unit tests

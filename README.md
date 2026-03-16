@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/rajashish147/FieldTrack-2.0/actions/workflows/deploy.yml/badge.svg)](https://github.com/rajashish147/FieldTrack-2.0/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org)
 
 ---
@@ -37,7 +37,7 @@ FieldTrack 2.0 is a production-ready REST API backend for managing field workfor
 
 | Layer | Technology |
 |-------|------------|
-| **Runtime** | Node.js 20 (Alpine) |
+| **Runtime** | Node.js 24 (Alpine) |
 | **Language** | TypeScript 5.9 (strict, ESM) |
 | **Framework** | Fastify 5 |
 | **Database** | PostgreSQL via [Supabase](https://supabase.com) |
@@ -98,7 +98,7 @@ FieldTrack 2.0 is a production-ready REST API backend for managing field workfor
 
 ## Quick Start
 
-**Prerequisites:** Node.js ≥ 20, npm, Redis, a Supabase project
+**Prerequisites:** Node.js ≥ 24, npm, Redis, a Supabase project
 
 ```bash
 # 1. Install dependencies
