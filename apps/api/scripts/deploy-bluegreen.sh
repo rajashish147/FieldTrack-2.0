@@ -75,7 +75,7 @@ sleep 5
 
 ATTEMPT=0
 
-until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/health" >/dev/null 2>&1; do
+until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT/ready" >/dev/null 2>&1; do
     ATTEMPT=$((ATTEMPT+1))
 
     if [ "$ATTEMPT" -ge "$MAX_HEALTH_ATTEMPTS" ]; then

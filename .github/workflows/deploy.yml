@@ -259,6 +259,10 @@ jobs:
             NGINX_LIVE="/etc/nginx/sites-enabled/fieldtrack.conf"
             ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
             INFRA_HASH_FILE="$HOME/.fieldtrack-infra-hash"
+            API_DOMAIN=$(grep -E '^API_DOMAIN=' "$INFRA_DIR/.env.monitoring" 2>/dev/null | tail -1 | cut -d '=' -f2-)
+            FRONTEND_DOMAIN=$(grep -E '^FRONTEND_DOMAIN=' "$INFRA_DIR/.env.monitoring" 2>/dev/null | tail -1 | cut -d '=' -f2-)
+            API_DOMAIN=${API_DOMAIN:-api.fieldtrack.meowsician.tech}
+            FRONTEND_DOMAIN=${FRONTEND_DOMAIN:-fieldtrack.meowsician.tech}
 
             # ── Nginx ──────────────────────────────────────────────────────────
             echo "=== Syncing Nginx config ==="
@@ -267,6 +271,8 @@ jobs:
 
             # Apply repo baseline (always has blue port 3001 as default)
             sudo cp "$INFRA_DIR/nginx/fieldtrack.conf" "$NGINX_LIVE"
+            sudo sed -i "s|__API_DOMAIN__|$API_DOMAIN|g" "$NGINX_LIVE"
+            sudo sed -i "s|__FRONTEND_DOMAIN__|$FRONTEND_DOMAIN|g" "$NGINX_LIVE"
 
             # Re-apply the current active slot so nginx keeps routing correctly
             ACTIVE_SLOT=$(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo "blue")
@@ -298,8 +304,8 @@ jobs:
             if [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
               echo "Monitoring configs changed — restarting stack..."
               cd "$INFRA_DIR"
-              docker compose -f docker-compose.monitoring.yml pull --quiet
-              docker compose -f docker-compose.monitoring.yml up -d
+              docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml pull --quiet
+              docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml up -d
               echo "$CURRENT_HASH" > "$INFRA_HASH_FILE"
               echo "Monitoring stack updated."
             else
@@ -343,17 +349,21 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Wait for API health
+        env:
+          FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
         run: |
-          echo "Waiting for API to become healthy..."
+          BASE_URL="${FT_API_BASE_URL:-https://api.fieldtrack.meowsician.tech}"
+          BASE_URL="${BASE_URL%/}"
+          echo "Waiting for API to become ready..."
           for i in $(seq 1 30); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.fieldtrack.meowsician.tech/health)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/ready")
             if [ "$STATUS" = "200" ]; then
-              echo "✓ API healthy (attempt $i)"
+              echo "✓ API ready (attempt $i)"
               exit 0
             fi
             sleep 2
           done
-          echo "✗ API did not become healthy after 60s"
+          echo "✗ API did not become ready after 60s"
           exit 1
 
       - name: Run API Smoke Tests

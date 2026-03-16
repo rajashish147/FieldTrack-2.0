@@ -7,10 +7,9 @@ WORKDIR /workspace
 # Install workspace dependencies first (for layer caching)
 COPY package.json package-lock.json ./
 COPY apps/api/package.json ./apps/api/
-COPY apps/web/package.json ./apps/web/
 COPY packages/types/package.json ./packages/types/
 
-RUN npm ci
+RUN npm ci --workspace apps/api --workspace packages/types --include-workspace-root=false
 
 # Copy shared types source and compile
 COPY packages/types/tsconfig.json ./packages/types/
@@ -32,10 +31,9 @@ ENV NODE_ENV=production
 
 COPY package.json package-lock.json ./
 COPY apps/api/package.json ./apps/api/
-COPY apps/web/package.json ./apps/web/
 COPY packages/types/package.json ./packages/types/
 
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --workspace apps/api --workspace packages/types --include-workspace-root=false
 
 COPY --from=builder /workspace/apps/api/dist ./apps/api/dist
 COPY --from=builder /workspace/packages/types/dist ./packages/types/dist

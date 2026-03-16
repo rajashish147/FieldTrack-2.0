@@ -401,7 +401,7 @@ Fastify API
 
 ## Related Documentation
 
-- [Deployment Guide](../backend/scripts/deploy-bluegreen.sh)
-- [Rollback System](../backend/docs/ROLLBACK_SYSTEM.md)
-- [API Documentation](../backend/README.md)
+- [Deployment Guide](../docs/DEPLOYMENT.md)
+- [Rollback System](../docs/ROLLBACK_SYSTEM.md)
+- [API Documentation](../apps/api/README.md)
 - [CI/CD Pipeline](../.github/workflows/deploy.yml)

@@ -1,4 +1,14 @@
 /** @type {import('next').NextConfig} */
+const defaultApiOrigin = process.env.NODE_ENV === "development"
+  ? "http://localhost:3000"
+  : "https://api.fieldtrack.meowsician.tech";
+
+const apiOrigin = process.env.API_DOMAIN
+  ? (process.env.API_DOMAIN.startsWith("http://") || process.env.API_DOMAIN.startsWith("https://")
+    ? process.env.API_DOMAIN
+    : `https://${process.env.API_DOMAIN}`)
+  : defaultApiOrigin;
+
 const nextConfig = {
   transpilePackages: ["mapbox-gl", "@fieldtrack/types"],
   images: {
@@ -11,7 +21,7 @@ const nextConfig = {
     return [
       {
         source: "/api/proxy/:path*",
-        destination: "https://api.fieldtrack.meowsician.tech/:path*",
+        destination: `${apiOrigin}/:path*`,
       },
     ];
   },

@@ -12,6 +12,7 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { AlwaysOnSampler } from "@opentelemetry/sdk-trace-base";
+import { env } from "./config/env.js";
 
 const sdk = new NodeSDK({
     resource: resourceFromAttributes({
@@ -29,7 +30,7 @@ const sdk = new NodeSDK({
 
     traceExporter: new OTLPTraceExporter({
         // "tempo" resolves via Docker service name on fieldtrack_network
-        url: "http://tempo:4318/v1/traces",
+        url: `${env.TEMPO_ENDPOINT ?? "http://tempo:4318"}/v1/traces`,
     }),
     instrumentations: [
         getNodeAutoInstrumentations({

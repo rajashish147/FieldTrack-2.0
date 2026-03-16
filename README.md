@@ -144,7 +144,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full setup instructions includi
 
 ```
 FieldTrack-2.0/
-├── backend/               # Fastify + TypeScript backend
+├── apps/api/              # Fastify + TypeScript backend
 │   ├── src/               # Application source
 │   │   ├── modules/       # Domain modules (attendance · locations · expenses · analytics)
 │   │   ├── plugins/       # Fastify plugins (JWT · Prometheus · security stack)
@@ -167,8 +167,8 @@ FieldTrack-2.0/
 | [Architecture](docs/ARCHITECTURE.md) | System design, component diagrams, data flows, deployment topology, security layers |
 | [API Reference](docs/API_REFERENCE.md) | All endpoints, auth requirements, request/response schemas, error codes |
 | [Deployment Guide](docs/DEPLOYMENT.md) | VPS provisioning, CI/CD setup, blue-green deploy, troubleshooting |
-| [Rollback System](backend/docs/ROLLBACK_SYSTEM.md) | Rollback architecture, deployment history, safety features |
-| [Rollback Quick Reference](backend/docs/ROLLBACK_QUICKREF.md) | Fast operator reference card for deployments |
+| [Rollback System](docs/ROLLBACK_SYSTEM.md) | Rollback architecture, deployment history, safety features |
+| [Rollback Quick Reference](docs/ROLLBACK_QUICKREF.md) | Fast operator reference card for deployments |
 | [Walkthrough](docs/walkthrough.md) | Phase-by-phase build history and deep-dives |
 | [Changelog](CHANGELOG.md) | Full history of every phase |
 | [Contributing](CONTRIBUTING.md) | Contribution workflow, branching, code conventions |

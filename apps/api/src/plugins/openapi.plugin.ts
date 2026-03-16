@@ -4,6 +4,7 @@ import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUI from "@fastify/swagger-ui";
 import { jsonSchemaTransform } from "fastify-type-provider-zod";
 import { z } from "zod";
+import { env } from "../config/env.js";
 
 /**
  * OpenAPI plugin for FieldTrack API.
@@ -87,7 +88,7 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
       },
       servers: [
         {
-          url: "https://api.fieldtrack.meowsician.tech",
+          url: `https://${env.API_DOMAIN ?? "api.fieldtrack.meowsician.tech"}`,
           description: "Production",
         },
         {

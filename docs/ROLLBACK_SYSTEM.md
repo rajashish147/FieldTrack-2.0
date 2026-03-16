@@ -33,7 +33,7 @@ The deployment script maintains a history of the last 5 successful deployments:
 
 ```bash
 # Location
-/home/ashish/FieldTrack-2.0/backend/.deploy_history
+/home/ashish/FieldTrack-2.0/apps/api/.deploy_history
 
 # Content (newest first, one SHA per line)
 b8c4d2e
@@ -62,7 +62,7 @@ The history is maintained using a rolling window:
 Deploy the latest image from CI:
 
 ```bash
-cd /home/ashish/FieldTrack-2.0/backend
+cd /home/ashish/FieldTrack-2.0/apps/api
 ./scripts/deploy-bluegreen.sh a4f91c2
 ```
 
@@ -71,7 +71,7 @@ cd /home/ashish/FieldTrack-2.0/backend
 Instantly restore the last working deployment:
 
 ```bash
-cd /home/ashish/FieldTrack-2.0/backend
+cd /home/ashish/FieldTrack-2.0/apps/api
 ./scripts/rollback.sh
 ```
 
@@ -184,7 +184,7 @@ sudo systemctl reload nginx # Reload only if valid
 - name: Deploy to VPS
   run: |
     ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-      "cd /home/ashish/FieldTrack-2.0/backend && \
+      "cd /home/ashish/FieldTrack-2.0/apps/api && \
        ./scripts/deploy-bluegreen.sh ${{ env.SHA_SHORT }}"
 ```
 
@@ -204,7 +204,7 @@ The history maintains the last 5 deployments in chronological order (newest firs
 ## File Locations
 
 ```
-/home/ashish/FieldTrack-2.0/backend/
+/home/ashish/FieldTrack-2.0/apps/api/
 ├── scripts/
 │   ├── deploy-bluegreen.sh    # Blue-green deployment
 │   └── rollback.sh             # Rollback automation
@@ -218,14 +218,14 @@ The history maintains the last 5 deployments in chronological order (newest firs
 
 ```bash
 # Make script executable
-chmod +x backend/scripts/rollback.sh
+chmod +x apps/api/scripts/rollback.sh
 ```
 
 ### No Deployment History
 
 ```
 ERROR: No deployment history found.
-File not found: /home/ashish/FieldTrack-2.0/backend/.deploy_history
+File not found: /home/ashish/FieldTrack-2.0/apps/api/.deploy_history
 ```
 
 **Solution:** Deploy at least once before attempting rollback.
@@ -278,4 +278,4 @@ Potential improvements (not currently implemented):
 
 - [Blue-Green Deployment](./DEPLOYMENT.md)
 - [CI/CD Pipeline](.github/workflows/deploy.yml)
-- [VPS Setup](./scripts/vps-setup.sh)
+- [VPS Setup](../apps/api/scripts/vps-setup.sh)

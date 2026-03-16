@@ -13,6 +13,11 @@ interface EnvConfig {
   REDIS_URL: string;
   // Phase 10: HTTP security
   ALLOWED_ORIGINS: string[];
+  // Domain configuration
+  API_DOMAIN: string | undefined;
+  FRONTEND_DOMAIN: string | undefined;
+  // Tracing export target
+  TEMPO_ENDPOINT: string | undefined;
   // Worker / computation safety limits
   MAX_QUEUE_DEPTH: number;
   MAX_POINTS_PER_SESSION: number;
@@ -60,6 +65,12 @@ export const env: EnvConfig = {
     .split(",")
     .map((o) => o.trim())
     .filter(Boolean),
+
+  API_DOMAIN: process.env["API_DOMAIN"] || undefined,
+  FRONTEND_DOMAIN: process.env["FRONTEND_DOMAIN"] || undefined,
+
+  // OTLP HTTP endpoint. Defaults in tracing.ts when unset.
+  TEMPO_ENDPOINT: process.env["TEMPO_ENDPOINT"] || undefined,
 
   // Maximum number of sessions that may sit in the worker queue at once.
   MAX_QUEUE_DEPTH: getOptionalInt("MAX_QUEUE_DEPTH", 1_000),

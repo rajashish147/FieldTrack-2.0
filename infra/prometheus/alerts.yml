@@ -53,21 +53,16 @@ groups:
 - name: fieldtrack_worker_alerts
   rules:
 
-  - alert: WorkerStoppedProcessing
-    expr: rate(distance_worker_jobs_total[5m]) == 0
-    for: 5m
-    labels:
-      severity: critical
-    annotations:
-      summary: "Worker stopped processing jobs"
+  # TODO(fieldtrack): add worker throughput alert when a dedicated
+  # distance worker processed jobs counter is exported.
 
-  - alert: QueueBacklogGrowing
-    expr: bullmq_queue_waiting_jobs > 500
+  - alert: AnalyticsQueueBacklogGrowing
+    expr: analytics_queue_depth > 500
     for: 5m
     labels:
       severity: warning
     annotations:
-      summary: "Queue backlog high"
+      summary: "Analytics queue backlog high"
 
   # Phase 22: Fire if more than 5 analytics jobs permanently fail within 5 minutes.
   # This indicates a systemic problem (bad DB schema change, Supabase outage, etc.)
@@ -80,33 +75,6 @@ groups:
     annotations:
       summary: "Analytics jobs failing at high rate"
       description: "More than 5 analytics jobs permanently failed (exhausted all retries) in the last 5 minutes. Check the analytics-failed dead letter queue and worker logs."
-
-# ---------------------------------------------------------
-# REDIS ALERTS
-# ---------------------------------------------------------
-
-- name: fieldtrack_redis_alerts
-  rules:
-
-  - alert: RedisHighLatency
-    expr: |
-      histogram_quantile(
-        0.95,
-        sum(rate(redis_command_duration_seconds_bucket[5m])) by (le)
-      ) > 0.05
-    for: 2m
-    labels:
-      severity: warning
-    annotations:
-      summary: "Redis latency high"
-
-  - alert: RedisMemoryHigh
-    expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.8
-    for: 5m
-    labels:
-      severity: critical
-    annotations:
-      summary: "Redis memory usage above 80%"
 
 # ---------------------------------------------------------
 # HOST ALERTS
