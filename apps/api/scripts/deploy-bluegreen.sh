@@ -42,6 +42,10 @@ if [ -z "${API_DOMAIN:-}" ]; then
     exit 1
 fi
 
+# Strip any scheme prefix (http:// or https://) — server_name only accepts bare hostnames.
+API_DOMAIN="${API_DOMAIN#https://}"
+API_DOMAIN="${API_DOMAIN#http://}"
+
 echo "========================================="
 echo "FieldTrack Blue-Green Deployment Started"
 echo "========================================="
@@ -118,7 +122,9 @@ echo "Health check passed."
 
 echo "[5/7] Switching nginx upstream..."
 
-NGINX_BACKUP="${NGINX_CONF}.bak.$(date +%s)"
+# Backup goes to /etc/nginx/ (not sites-enabled/) so nginx does not load it
+# during validation and trigger a duplicate-upstream error.
+NGINX_BACKUP="/etc/nginx/fieldtrack.conf.bak.$(date +%s)"
 NGINX_TMP="$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)"
 
 # Generate a fresh nginx config from the repo template.
