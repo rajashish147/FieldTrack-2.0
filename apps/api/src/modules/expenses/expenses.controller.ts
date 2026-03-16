@@ -53,6 +53,7 @@ export const expensesController = {
   /**
    * GET /admin/expenses
    * Returns all expenses across the organization (ADMIN only, paginated).
+   * Accepts optional ?employee_id=<uuid> to scope to a single employee.
    */
   async getOrgAll(
     request: FastifyRequest,
@@ -60,10 +61,13 @@ export const expensesController = {
   ): Promise<void> {
     try {
       const parsed = expensePaginationSchema.parse(request.query);
+      const query = request.query as Record<string, string | undefined>;
+      const employeeId = query.employee_id;
       const result = await expensesService.getOrgExpenses(
         request,
         parsed.page,
         parsed.limit,
+        employeeId,
       );
       reply.status(200).send(paginated(result.data, parsed.page, parsed.limit, result.total));
     } catch (error) {

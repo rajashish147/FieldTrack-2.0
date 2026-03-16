@@ -98,14 +98,18 @@ export const expensesRepository = {
     request: FastifyRequest,
     page: number,
     limit: number,
+    employeeId?: string,
   ): Promise<{ data: EnrichedExpense[]; total: number }> {
-    const { data, error, count } = await applyPagination(
-      orgTable(request, "expenses")
-        .select(EXPENSE_ENRICHED_COLS, { count: "exact" })
-        .order("submitted_at", { ascending: false }),
-      page,
-      limit,
-    );
+    let baseQuery = orgTable(request, "expenses")
+      .select(EXPENSE_ENRICHED_COLS, { count: "exact" })
+      .order("submitted_at", { ascending: false });
+
+    if (employeeId) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      baseQuery = (baseQuery as any).eq("employee_id", employeeId);
+    }
+
+    const { data, error, count } = await applyPagination(baseQuery, page, limit);
 
     if (error) {
       throw new Error(`Failed to fetch org expenses: ${error.message}`);
@@ -121,11 +125,17 @@ export const expensesRepository = {
     expenseId: string,
     status: ExpenseStatus,
     reviewerId: string,
+    rejectionComment?: string,
   ): Promise<EnrichedExpense> {
     const now = new Date().toISOString();
 
+    const updatePayload: Record<string, unknown> = { status, reviewed_at: now, reviewed_by: reviewerId };
+    if (status === "REJECTED" && rejectionComment) {
+      updatePayload.rejection_comment = rejectionComment;
+    }
+
     const { data, error } = await orgTable(request, "expenses")
-      .update({ status, reviewed_at: now, reviewed_by: reviewerId })
+      .update(updatePayload)
       .eq("id", expenseId)
       .select(EXPENSE_ENRICHED_COLS)
       .single();
@@ -149,10 +159,11 @@ export const expensesRepository = {
     // Fetch the full (org-scoped) expense list with employee info.
     // We group in application code to avoid a raw SQL RPC; the expense
     // table is orders of magnitude smaller than attendance_sessions.
+    // No limit applied — expenses per org are bounded by org size × submission rate
+    // and the pagination happens after in-memory grouping by employee.
     const { data, error } = await orgTable(request, "expenses")
-      .select(EXPENSE_ENRICHED_COLS, { count: "exact" })
-      .order("submitted_at", { ascending: false })
-      .limit(5000); // safety cap — grouping happens in JS below
+      .select(EXPENSE_ENRICHED_COLS)
+      .order("submitted_at", { ascending: false });
 
     if (error) {
       throw new Error(`Failed to fetch expense summary: ${error.message}`);

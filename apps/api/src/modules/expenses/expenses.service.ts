@@ -10,6 +10,7 @@ import type { EnrichedExpense } from "./expenses.repository.js";
 import { profileRepository } from "../profile/profile.repository.js";
 import { analyticsMetricsRepository } from "../analytics/analytics.metrics.repository.js";
 import { invalidateOrgAnalytics } from "../../utils/cache.js";
+import { sseEventBus } from "../../utils/sse-emitter.js";
 
 /**
  * Expenses service — business rules for expense management.
@@ -78,6 +79,12 @@ export const expensesService = {
       "Expense created",
     );
 
+    sseEventBus.emitOrgEvent(request.organizationId, "expense.created", {
+      expenseId: expense.id,
+      employeeId,
+      amount: expense.amount,
+    });
+
     return expense;
   },
 
@@ -98,13 +105,15 @@ export const expensesService = {
   /**
    * Retrieve a paginated list of all expenses in the organization.
    * Caller must hold ADMIN role — enforced at the route level.
+   * Optionally scoped to a single employee for the admin expense detail panel.
    */
   async getOrgExpenses(
     request: FastifyRequest,
     page: number,
     limit: number,
+    employeeId?: string,
   ): Promise<{ data: EnrichedExpense[]; total: number }> {
-    return expensesRepository.findExpensesByOrg(request, page, limit);
+    return expensesRepository.findExpensesByOrg(request, page, limit, employeeId);
   },
 
   /**
@@ -132,15 +141,21 @@ export const expensesService = {
       throw new ExpenseAlreadyReviewed(expense.status);
     }
 
-    // 3. Apply the new status, recording the reviewer identity.
+    // 3. Validate: rejection_comment is required when status is REJECTED.
+    if (body.status === "REJECTED" && !body.rejection_comment) {
+      throw Object.assign(new Error("rejection_comment is required when rejecting an expense"), { statusCode: 400 });
+    }
+
+    // 4. Apply the new status, recording the reviewer identity.
     const updated = await expensesRepository.updateExpenseStatus(
       request,
       expenseId,
       body.status,
       request.user.sub,
+      body.rejection_comment,
     );
 
-    // 4. Structured log with event tag for observability.
+    // 5. Structured log with event tag for observability.
     const event =
       body.status === "APPROVED" ? "expense_approved" : "expense_rejected";
 
@@ -156,6 +171,12 @@ export const expensesService = {
       },
       body.status === "APPROVED" ? "Expense approved" : "Expense rejected",
     );
+
+    sseEventBus.emitOrgEvent(request.organizationId, "expense.status", {
+      expenseId: updated.id,
+      employeeId: updated.employee_id,
+      status: updated.status,
+    });
 
     return updated;
   },

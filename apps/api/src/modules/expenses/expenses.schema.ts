@@ -29,6 +29,10 @@ export const updateExpenseStatusBodySchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"], {
     error: "status must be APPROVED or REJECTED",
   }),
+  rejection_comment: z
+    .string()
+    .max(1000, { message: "rejection_comment must not exceed 1000 characters" })
+    .optional(),
 });
 
 export type UpdateExpenseStatusBody = z.infer<

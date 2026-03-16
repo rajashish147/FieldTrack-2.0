@@ -116,4 +116,76 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
       }
     },
   );
-}
+  /**
+   * GET /admin/expenses/export
+   *
+   * Returns all org expenses as a UTF-8 CSV file.
+   * The browser receives Content-Disposition: attachment so it saves immediately.
+   * Supports optional ?employee_id= filter.
+   *
+   * Auth: ADMIN only.
+   */
+  app.get(
+    "/admin/expenses/export",
+    {
+      schema: {
+        tags: ["admin"],
+        description: "Export all org expenses as CSV (ADMIN only).",
+      },
+      preValidation: [authenticate, requireRole("ADMIN")],
+    },
+    async (request, reply) => {
+      try {
+        const query = request.query as Record<string, string | undefined>;
+        const employeeId = query.employee_id;
+
+        // Fetch all matching expenses (no pagination for export)
+        const result = await expensesRepository.findExpensesByOrg(request, 1, 10_000, employeeId);
+        const rows = result.data;
+
+        const HEADERS = [
+          "id", "employee_code", "employee_name",
+          "amount", "description", "status", "rejection_comment",
+          "submitted_at", "reviewed_at",
+        ];
+
+        function escapeCsv(val: unknown): string {
+          const s = val == null ? "" : String(val);
+          if (s.includes(",") || s.includes("\"") || s.includes("\n")) {
+            return `"${s.replace(/"/g, "\"\"")}"`;
+          }
+          return s;
+        }
+
+        const lines = [
+          HEADERS.join(","),
+          ...rows.map((r) =>
+            [
+              r.id,
+              r.employee_code,
+              r.employee_name,
+              r.amount,
+              r.description,
+              r.status,
+              (r as Record<string, unknown>).rejection_comment,
+              r.submitted_at,
+              r.reviewed_at,
+            ]
+              .map(escapeCsv)
+              .join(","),
+          ),
+        ];
+
+        const csv = lines.join("\r\n");
+        const filename = `expenses-${new Date().toISOString().substring(0, 10)}.csv`;
+
+        reply
+          .status(200)
+          .header("Content-Type", "text/csv; charset=utf-8")
+          .header("Content-Disposition", `attachment; filename="${filename}"`)
+          .send(csv);
+      } catch (error) {
+        handleError(error, request, reply, "Unexpected error exporting expenses");
+      }
+    },
+  );}
