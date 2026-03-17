@@ -188,15 +188,19 @@ echo "Deployment history updated: $IMAGE_SHA"
 # every deploy above and does not require a monitoring restart).
 # ---------------------------------------------------------------------------
 echo "[monitoring] Checking monitoring stack configuration..."
-MONITORING_HASH=$(find "$REPO_DIR/infra" \
+MONITORING_HASH=$(find "$REPO_DIR/infra" -readable \
     -not -path "$REPO_DIR/infra/nginx/*" \
     \( -name '*.yml' -o -name '*.yaml' -o -name '*.conf' -o -name '*.toml' -o -name '*.json' \) \
-    | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
+    | sort | xargs -r sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "changed")
 MONITORING_HASH_FILE="$HOME/.fieldtrack-monitoring-hash"
 if [ -f "$MONITORING_HASH_FILE" ] && [ "$(cat "$MONITORING_HASH_FILE")" = "$MONITORING_HASH" ]; then
     echo "[monitoring] Configuration unchanged — skipping restart."
 else
     echo "[monitoring] Configuration changed — restarting monitoring stack..."
+    docker compose \
+        -f "$REPO_DIR/infra/docker-compose.monitoring.yml" \
+        --env-file "$REPO_DIR/infra/.env.monitoring" \
+        pull --quiet
     docker compose \
         -f "$REPO_DIR/infra/docker-compose.monitoring.yml" \
         --env-file "$REPO_DIR/infra/.env.monitoring" \
