@@ -371,7 +371,7 @@ jobs:
           BASE_URL="${BASE_URL%/}"
           echo "Waiting for API to become ready..."
           for i in $(seq 1 30); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/ready")
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health")
             if [ "$STATUS" = "200" ]; then
               echo "✓ API ready (attempt $i)"
               exit 0
