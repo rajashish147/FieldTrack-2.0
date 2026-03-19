@@ -19,8 +19,24 @@ const cacheClient = new Redis(env.REDIS_URL, {
 });
 
 cacheClient.on("error", (err: Error) => {
-  // Intentionally non-crashing — log only, don't rethrow
-  console.error("[cache] Redis error:", err.message);
+  // Intentionally non-crashing — log only, don't rethrow.
+  //
+  // console.error is deliberately avoided here: it produces an unstructured
+  // string that bypasses Pino and is therefore invisible in Loki / Grafana.
+  //
+  // Writing structured JSON to stderr mirrors what Pino does internally and
+  // is picked up by Docker's log driver → Promtail → Loki exactly like any
+  // other application log line.  The `component` field makes it filterable:
+  //   {component="cache"} |= "Redis cache client error"
+  process.stderr.write(
+    JSON.stringify({
+      level: "error",
+      time: Date.now(),
+      component: "cache",
+      msg: "Redis cache client error",
+      err: { message: err.message, name: err.name },
+    }) + "\n",
+  );
 });
 
 // ─── L1: in-process memory cache ─────────────────────────────────────────────

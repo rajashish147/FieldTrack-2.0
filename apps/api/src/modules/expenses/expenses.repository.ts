@@ -159,17 +159,36 @@ export const expensesRepository = {
     // Fetch the full (org-scoped) expense list with employee info.
     // We group in application code to avoid a raw SQL RPC; the expense
     // table is orders of magnitude smaller than attendance_sessions.
-    // No limit applied — expenses per org are bounded by org size × submission rate
-    // and the pagination happens after in-memory grouping by employee.
+    //
+    // Safety cap: 50 000 rows is sufficient for any realistic org over several
+    // years of operation (100 employees × 10 expenses/month × 48 months = 48 000).
+    // Without this limit a pathological dataset could cause an unbounded fetch
+    // that exhausts server memory.  If the cap is hit, the structured warning
+    // below will be visible in Loki so operators know to migrate to a DB-side
+    // GROUP BY aggregation.
+    const EXPENSE_SUMMARY_LIMIT = 50_000;
     const { data, error } = await orgTable(request, "expenses")
       .select(EXPENSE_ENRICHED_COLS)
-      .order("submitted_at", { ascending: false });
+      .order("submitted_at", { ascending: false })
+      .limit(EXPENSE_SUMMARY_LIMIT);
 
     if (error) {
       throw new Error(`Failed to fetch expense summary: ${error.message}`);
     }
 
     const rows = ((data ?? []) as Array<Record<string, unknown>>).map(flattenEmployee);
+
+    // Warn operators when the safety cap fires — this is a signal to migrate
+    // findExpenseSummaryByEmployee to a DB-side GROUP BY aggregation.
+    if (rows.length >= EXPENSE_SUMMARY_LIMIT) {
+      (request as { log?: { warn: (obj: object, msg: string) => void } }).log?.warn(
+        {
+          organizationId: request.organizationId,
+          rowsCapped: EXPENSE_SUMMARY_LIMIT,
+        },
+        "findExpenseSummaryByEmployee hit safety row cap — summary may be incomplete; migrate to DB-side aggregation",
+      );
+    }
 
     // Aggregate per employee
     const map = new Map<string, EmployeeExpenseSummary>();

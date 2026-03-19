@@ -146,6 +146,57 @@ export const distanceJobsTotal = new client.Counter({
   registers: [register],
 });
 
+// ─── Phase 25: Webhook Metrics ────────────────────────────────────────────────
+
+/**
+ * Total webhook delivery attempts, labelled by event type, outcome status,
+ * and organization_id.
+ *
+ * `status` values: "success" | "failed" | "retrying"
+ *
+ * Cardinality note: organization_id is safe to label here because FieldTrack
+ * is a B2B SaaS with a bounded number of organisations (thousands, not
+ * millions).  Each org generates at most O(event_types × statuses) = ~15 series.
+ * Do NOT add high-cardinality labels such as event_id or webhook_id.
+ *
+ * Not yet wired to the delivery worker — defined here so the metric is
+ * registered in the same process-level registry as all other metrics and
+ * appears in /metrics output from day one (with zero counters until Phase 25
+ * delivery logic is implemented).
+ *
+ * Usage in the delivery worker:
+ *   webhookDeliveriesTotal
+ *     .labels({ event_type: envelope.type, status: "success", organization_id: orgId })
+ *     .inc();
+ */
+export const webhookDeliveriesTotal = new client.Counter({
+  name: "webhook_deliveries_total",
+  help: "Total number of webhook delivery attempts",
+  labelNames: ["event_type", "status", "organization_id"] as const,
+  registers: [register],
+});
+
+/**
+ * Total permanently failed webhook deliveries (all retries exhausted).
+ * Labelled by event type and organization_id for per-org, per-event alerting.
+ *
+ * Distinct from webhookDeliveriesTotal{status="failed"} so that alert
+ * expressions can target permanent failures without filtering label values.
+ *
+ * Cardinality: same reasoning as webhookDeliveriesTotal — org count is bounded.
+ *
+ * Usage in the delivery worker:
+ *   webhookFailuresTotal
+ *     .labels({ event_type: envelope.type, organization_id: orgId })
+ *     .inc();
+ */
+export const webhookFailuresTotal = new client.Counter({
+  name: "webhook_failures_total",
+  help: "Total number of webhook deliveries that permanently failed after all retries",
+  labelNames: ["event_type", "organization_id"] as const,
+  registers: [register],
+});
+
 const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.addHook("onRequest", async (request) => {
     request.startTime = process.hrtime();

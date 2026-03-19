@@ -5,7 +5,7 @@
 //
 // Traces are shipped via OTLP HTTP to Grafana Tempo on the shared Docker
 // network. View them in: Grafana → Explore → Tempo → Search traces
-// Filter by service.name = "fieldtrack-backend"
+// Filter by service.name = env.SERVICE_NAME (default: "fieldtrack-backend")
 
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
@@ -18,9 +18,11 @@ const sdk = new NodeSDK({
     resource: resourceFromAttributes({
         // Use stable string literals to avoid breakage when
         // @opentelemetry/semantic-conventions renames constants.
-        "service.name": "fieldtrack-backend",
+        // Driven entirely by env so the service graph label updates with a
+        // single env-var change — no code edits needed per deployment.
+        "service.name": env.SERVICE_NAME,
         "service.version": "2.0",
-        "deployment.environment": process.env["NODE_ENV"] ?? "development",
+        "deployment.environment": env.APP_ENV,
     }),
 
     // Export every trace. For a single-instance production app this is fine;
@@ -29,8 +31,9 @@ const sdk = new NodeSDK({
     sampler: new AlwaysOnSampler(),
 
     traceExporter: new OTLPTraceExporter({
-        // "tempo" resolves via Docker service name on fieldtrack_network
-        url: `${env.TEMPO_ENDPOINT ?? "http://tempo:4318"}/v1/traces`,
+        // TEMPO_ENDPOINT is validated at startup (default: http://tempo:4318).
+        // Override via env for non-Docker or external Tempo deployments.
+        url: `${env.TEMPO_ENDPOINT}/v1/traces`,
     }),
     instrumentations: [
         getNodeAutoInstrumentations({

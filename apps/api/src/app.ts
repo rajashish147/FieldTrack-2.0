@@ -25,7 +25,7 @@ import compressPlugin from "@fastify/compress";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: getLoggerConfig(env.NODE_ENV),
+    logger: getLoggerConfig(env.APP_ENV),
     // Phase 10: HTTP hardening (externalized limits)
     bodyLimit: env.BODY_LIMIT_BYTES,
     connectionTimeout: env.REQUEST_TIMEOUT_MS,
@@ -163,7 +163,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // @fastify/jwt is only needed in test mode (HS256 test tokens).
   // Production uses JWKS/ES256 verification in auth.ts via verifySupabaseToken().
-  if (env.NODE_ENV === "test") {
+  if (env.APP_ENV === "test") {
     await registerJwt(app);
   }
 

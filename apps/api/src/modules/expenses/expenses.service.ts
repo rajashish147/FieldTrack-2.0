@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { expensesRepository } from "./expenses.repository.js";
-import { ExpenseAlreadyReviewed, NotFoundError, requireEmployeeContext } from "../../utils/errors.js";
+import { BadRequestError, ExpenseAlreadyReviewed, NotFoundError, requireEmployeeContext } from "../../utils/errors.js";
 import type {
   Expense,
   CreateExpenseBody,
@@ -11,6 +11,7 @@ import { profileRepository } from "../profile/profile.repository.js";
 import { analyticsMetricsRepository } from "../analytics/analytics.metrics.repository.js";
 import { invalidateOrgAnalytics } from "../../utils/cache.js";
 import { sseEventBus } from "../../utils/sse-emitter.js";
+import { emitEvent } from "../../utils/event-bus.js";
 
 /**
  * Expenses service — business rules for expense management.
@@ -85,6 +86,17 @@ export const expensesService = {
       amount: expense.amount,
     });
 
+    emitEvent("expense.created", {
+      organization_id: request.organizationId,
+      data: {
+        expense_id:   expense.id,
+        employee_id:  employeeId,
+        amount:       expense.amount,
+        description:  expense.description,
+        submitted_at: expense.submitted_at,
+      },
+    });
+
     return expense;
   },
 
@@ -143,7 +155,7 @@ export const expensesService = {
 
     // 3. Validate: rejection_comment is required when status is REJECTED.
     if (body.status === "REJECTED" && !body.rejection_comment) {
-      throw Object.assign(new Error("rejection_comment is required when rejecting an expense"), { statusCode: 400 });
+      throw new BadRequestError("rejection_comment is required when rejecting an expense");
     }
 
     // 4. Apply the new status, recording the reviewer identity.
@@ -177,6 +189,35 @@ export const expensesService = {
       employeeId: updated.employee_id,
       status: updated.status,
     });
+
+    if (body.status === "APPROVED") {
+      emitEvent("expense.approved", {
+        organization_id: request.organizationId,
+        data: {
+          expense_id:  updated.id,
+          employee_id: updated.employee_id,
+          amount:      updated.amount,
+          description: updated.description,
+          approved_by: request.user.sub,
+          reviewed_at: updated.reviewed_at ?? new Date().toISOString(),
+        },
+      });
+    } else if (body.status === "REJECTED") {
+      // Phase 25: emit expense.rejected so webhook subscribers receive
+      // rejection events on the same code path as approvals.
+      emitEvent("expense.rejected", {
+        organization_id: request.organizationId,
+        data: {
+          expense_id:        updated.id,
+          employee_id:       updated.employee_id,
+          amount:            updated.amount,
+          description:       updated.description,
+          rejected_by:       request.user.sub,
+          reviewed_at:       updated.reviewed_at ?? new Date().toISOString(),
+          rejection_comment: body.rejection_comment,
+        },
+      });
+    }
 
     return updated;
   },

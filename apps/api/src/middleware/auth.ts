@@ -11,22 +11,22 @@ import { env } from "../config/env.js";
 
 /**
  * Layer 2 — Authentication Middleware
- * 
+ *
  * Fastify preHandler that authenticates incoming requests.
  *
  * Phase 20: Updated to use Supabase JWKS verification (ES256) in production.
  * In test mode, falls back to @fastify/jwt for compatibility with test tokens.
- * 
+ *
  * Responsibilities:
  * 1. Extract token from Authorization header
  * 2. Verify token signature (delegates to Layer 1)
  * 3. Load user data from database
  * 4. Validate complete user context
  * 5. Attach authenticated user to request
- * 
+ *
  * This middleware handles HTTP-specific concerns (headers, responses)
  * while Layer 1 (verifySupabaseToken) handles pure token verification.
- * 
+ *
  * Any request that fails verification or has malformed claims
  * is rejected with a 401 Unauthorized response.
  */
@@ -50,9 +50,9 @@ export async function authenticate(
         let organizationId: string | undefined;
 
         // Step 2: Verify token signature (Layer 1)
-        // In test mode (NODE_ENV=test), use @fastify/jwt for backward compatibility
+        // In test mode (APP_ENV=test), use @fastify/jwt for backward compatibility
         // In production, use Supabase JWKS verification
-        if (env.NODE_ENV === "test") {
+        if (env.APP_ENV === "test") {
             // Test mode: use @fastify/jwt (synchronous verification)
             try {
                 const decoded = request.server.jwt.verify(token) as any;
@@ -62,9 +62,10 @@ export async function authenticate(
                 organizationId = decoded.organization_id;
                 // Test tokens embed employee_id directly to avoid a DB call in tests.
                 // signEmployeeToken includes it; ADMIN tokens omit it → undefined.
-                // Use process.env directly (not the validated env object) so this
-                // shortcut is provably unreachable outside a test process.
-                if (process.env.NODE_ENV === "test") {
+                // Guard: employee_id embedding is only valid in test mode.
+                // Uses the centralized env.APP_ENV so all environment checks
+                // flow through the validated config — no raw process.env access.
+                if (env.APP_ENV === "test") {
                     request.employeeId = decoded.employee_id ?? undefined;
                 }
             } catch (error) {

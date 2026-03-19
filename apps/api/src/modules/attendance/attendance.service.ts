@@ -12,6 +12,7 @@ import type { AttendanceSession } from "./attendance.schema.js";
 import type { EnrichedAttendanceSession } from "./attendance.repository.js";
 import { profileRepository } from "../profile/profile.repository.js";
 import { sseEventBus } from "../../utils/sse-emitter.js";
+import { emitEvent } from "../../utils/event-bus.js";
 
 /**
  * Attendance service — business logic for check-in/check-out.
@@ -51,6 +52,15 @@ export const attendanceService = {
       employeeId,
     });
 
+    emitEvent("employee.checked_in", {
+      organization_id: request.organizationId,
+      data: {
+        employee_id: employeeId,
+        session_id: session.id,
+        checkin_at: session.checkin_at,
+      },
+    });
+
     return session;
   },
 
@@ -78,6 +88,16 @@ export const attendanceService = {
     sseEventBus.emitOrgEvent(request.organizationId, "session.checkout", {
       sessionId: closedSession.id,
       employeeId,
+    });
+
+    emitEvent("employee.checked_out", {
+      organization_id: request.organizationId,
+      data: {
+        employee_id: employeeId,
+        session_id: closedSession.id,
+        checkin_at: closedSession.checkin_at,
+        checkout_at: closedSession.checkout_at ?? new Date().toISOString(),
+      },
     });
 
     enqueueDistanceJob(closedSession.id).catch((err: unknown) => {

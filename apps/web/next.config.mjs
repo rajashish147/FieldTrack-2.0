@@ -16,7 +16,17 @@ function validateApiOrigin(origin) {
 
 const defaultApiOrigin = process.env.NODE_ENV === "development"
   ? "http://localhost:3000"
-  : "https://api.fieldtrack.meowsician.tech";
+  : (() => {
+      const url = process.env.NEXT_PUBLIC_API_URL;
+      if (!url) {
+        throw new Error(
+          "NEXT_PUBLIC_API_URL is required in production.\n" +
+          "Set it to your API base URL (e.g. https://api.getfieldtrack.app).\n" +
+          "For local development, set NODE_ENV=development or set the variable explicitly."
+        );
+      }
+      return url;
+    })();
 
 const apiOrigin = process.env.API_DOMAIN
   ? (process.env.API_DOMAIN.startsWith("http://") || process.env.API_DOMAIN.startsWith("https://")
@@ -53,7 +63,7 @@ const nextConfig = {
           },
           {
             key: 'Content-Security-Policy',
-            value: "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.fieldtrack.meowsician.tech https://*.supabase.co; frame-ancestors 'self';",
+            value: `default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${apiOrigin} https://*.supabase.co; frame-ancestors 'self';`,
           },
         ],
       },

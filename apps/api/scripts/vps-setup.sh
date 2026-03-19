@@ -20,8 +20,8 @@
 set -euo pipefail
 
 # ── Configuration (EDIT THESE) ─────────────────────────────────────────────────
-DOMAIN="api.fieldtrack.meowsician.tech"     # Production API domain
-FRONTEND_DOMAIN="fieldtrack.meowsician.tech" # Production frontend domain
+DOMAIN="api.getfieldtrack.app"               # Production API domain
+FRONTEND_DOMAIN="app.getfieldtrack.app"      # Production frontend domain
 GH_USER="fieldtrack-tech"                    # GitHub org name
 GH_PAT=""                                   # GitHub Personal Access Token (packages:read)
 DEPLOY_USER="ashish"                        # Non-root user for deployment

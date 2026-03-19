@@ -1,14 +1,36 @@
 import type { FastifyInstance } from "fastify";
 import { Redis } from "ioredis";
+import { createHash } from "crypto";
 import { redisConnectionOptions } from "../config/redis.js";
 import { supabaseServiceClient } from "../config/supabase.js";
 import { distanceQueue } from "../workers/distance.queue.js";
 import { analyticsQueue } from "../workers/analytics.queue.js";
+import { env } from "../config/env.js";
 
 interface HealthResponse {
     status: string;
     timestamp: string;
+    config_hash: string;
 }
+
+// Compute once at module load — the config doesn't change at runtime.
+// Matches the hash emitted by logStartupConfig so /health and the startup
+// log can be cross-referenced without querying Loki.
+const CONFIG_HASH = createHash("sha256")
+  .update(
+    JSON.stringify({
+      configVersion: env.CONFIG_VERSION,
+      appEnv:        env.APP_ENV,
+      port:          env.PORT,
+      appBaseUrl:    env.APP_BASE_URL      ?? "",
+      apiBaseUrl:    env.API_BASE_URL      ?? "",
+      frontendUrl:   env.FRONTEND_BASE_URL ?? "",
+      serviceName:   env.SERVICE_NAME,
+      corsOrigin:    env.CORS_ORIGIN,
+    }),
+  )
+  .digest("hex")
+  .slice(0, 12);
 
 interface ReadyResponse {
     status: "ready" | "not_ready";
@@ -48,6 +70,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
         return {
             status: "ok",
             timestamp: new Date().toISOString(),
+            config_hash: CONFIG_HASH,
         };
     });
 

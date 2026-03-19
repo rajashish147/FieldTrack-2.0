@@ -49,21 +49,37 @@ export const dashboardService = {
     // Querying this week's rows (Mon → today) is O(~5-7 rows) not O(sessions).
     // expenses_count / expenses_amount track submissions; we still need status
     // breakdown so we keep a bounded expense query (only this week's submissions).
-    const [metricsResult, expensesResult] = await Promise.all([
+    // Three queries run in parallel:
+    //   1. This week's daily metrics rows (bounded by date range — at most ~7 rows)
+    //   2. Total expense count via HEAD (no rows fetched, pure COUNT(*))
+    //   3. Approved expense count via HEAD (no rows fetched, pure COUNT(*))
+    //
+    // Previously a single SELECT status FROM expenses with no LIMIT was used.
+    // For a long-tenured employee with hundreds of expenses that caused an
+    // unbounded row fetch on every dashboard load.  COUNT HEAD queries are O(1)
+    // index scans and eliminate the payload entirely.
+    const [metricsResult, submittedResult, approvedResult] = await Promise.all([
       orgTable(request, "employee_daily_metrics")
         .select("sessions, distance_km, duration_seconds")
         .eq("employee_id", employeeId)
         .gte("date", weekStartDate),
       orgTable(request, "expenses")
-        .select("status")
+        .select("id", { count: "exact", head: true })
         .eq("employee_id", employeeId),
+      orgTable(request, "expenses")
+        .select("id", { count: "exact", head: true })
+        .eq("employee_id", employeeId)
+        .eq("status", "APPROVED"),
     ]);
 
     if (metricsResult.error) {
       throw new Error(`Dashboard metrics query failed: ${metricsResult.error.message}`);
     }
-    if (expensesResult.error) {
-      throw new Error(`Dashboard expenses query failed: ${expensesResult.error.message}`);
+    if (submittedResult.error) {
+      throw new Error(`Dashboard expenses submitted count failed: ${submittedResult.error.message}`);
+    }
+    if (approvedResult.error) {
+      throw new Error(`Dashboard expenses approved count failed: ${approvedResult.error.message}`);
     }
 
     const metricRows = (metricsResult.data ?? []) as {
@@ -71,8 +87,6 @@ export const dashboardService = {
       distance_km: number;
       duration_seconds: number;
     }[];
-
-    const expenses = (expensesResult.data ?? []) as { status: string }[];
 
     let sessionsThisWeek = 0;
     let distanceThisWeek = 0;
@@ -88,8 +102,8 @@ export const dashboardService = {
       sessionsThisWeek,
       distanceThisWeek: Math.round(distanceThisWeek * 100) / 100,
       hoursThisWeek: Math.round((durationSecondsThisWeek / 3600) * 100) / 100,
-      expensesSubmitted: expenses.length,
-      expensesApproved: expenses.filter((e) => e.status === "APPROVED").length,
+      expensesSubmitted: submittedResult.count ?? 0,
+      expensesApproved: approvedResult.count ?? 0,
     };
   },
 };

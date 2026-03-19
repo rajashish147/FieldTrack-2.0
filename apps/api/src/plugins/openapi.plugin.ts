@@ -87,14 +87,24 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
         },
       },
       servers: [
+        // Remote server — only included when API_BASE_URL is configured.
+        // Changing the deployment domain requires only updating API_BASE_URL in .env.
+        // No domain is ever hardcoded here.
+        ...(env.API_BASE_URL
+          ? [
+              {
+                url: env.API_BASE_URL,
+                description:
+                  env.APP_ENV === "production" ? "Production" : "Remote",
+              },
+            ]
+          : []),
+        // Local development server — always included so Swagger UI works
+        // out of the box without any env configuration.
         {
-          url: `https://${env.API_DOMAIN ?? "api.fieldtrack.meowsician.tech"}`,
-          description: "Production",
-        },
-        {
-          url: "http://localhost:3001",
+          url: `http://localhost:${env.PORT}`,
           description: "Local development",
-        }
+        },
       ],
       tags: [
         { name: "health", description: "Health check and system status endpoints" },

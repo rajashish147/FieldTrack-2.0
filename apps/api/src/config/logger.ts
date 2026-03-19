@@ -42,6 +42,15 @@ const productionLogger: LoggerConfig = {
     mixin: otelMixin,
 };
 
-export function getLoggerConfig(nodeEnv: string): LoggerConfig {
-    return nodeEnv === "production" ? productionLogger : developmentLogger;
+/**
+ * Returns the appropriate Pino logger configuration for the given app environment.
+ *
+ * Pass env.APP_ENV (not env.NODE_ENV) so logger verbosity is driven by the
+ * same canonical environment token used everywhere else in the application.
+ *
+ * production → structured JSON (machine-readable, ingested by Loki)
+ * everything else → pino-pretty with colours (human-readable in dev/staging/test)
+ */
+export function getLoggerConfig(appEnv: string): LoggerConfig {
+    return appEnv === "production" ? productionLogger : developmentLogger;
 }

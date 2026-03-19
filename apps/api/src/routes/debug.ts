@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { distanceQueue } from "../workers/distance.queue.js";
+import { env } from "../config/env.js";
 
 interface DebugRedisResponse {
   status: "ok" | "error";
@@ -20,7 +21,7 @@ interface DebugRedisResponse {
  */
 export async function debugRoutes(app: FastifyInstance): Promise<void> {
   // Only register debug routes in non-production environments
-  if (process.env["NODE_ENV"] === "production") {
+  if (env.APP_ENV === "production") {
     app.log.info("Debug routes disabled in production");
     return;
   }

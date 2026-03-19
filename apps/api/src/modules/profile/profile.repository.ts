@@ -89,23 +89,37 @@ export const profileRepository = {
 
   /**
    * Get employee expense stats.
+   *
+   * Uses two COUNT HEAD queries instead of fetching all expense rows.
+   * A long-tenured employee could have hundreds of expenses; fetching them all
+   * just to call .length and .filter was an unbounded O(N) row fetch on every
+   * profile load.  COUNT HEAD queries are O(1) index scans that return only the
+   * count — no row data is transferred over the wire.
    */
   async getEmployeeExpenseStats(
     request: FastifyRequest,
     employeeId: string,
   ): Promise<{ expensesSubmitted: number; expensesApproved: number }> {
-    const { data, error } = await orgTable(request, "expenses")
-      .select("status")
-      .eq("employee_id", employeeId);
+    const [submittedResult, approvedResult] = await Promise.all([
+      orgTable(request, "expenses")
+        .select("id", { count: "exact", head: true })
+        .eq("employee_id", employeeId),
+      orgTable(request, "expenses")
+        .select("id", { count: "exact", head: true })
+        .eq("employee_id", employeeId)
+        .eq("status", "APPROVED"),
+    ]);
 
-    if (error) {
-      throw new Error(`Profile: failed to fetch expense stats: ${error.message}`);
+    if (submittedResult.error) {
+      throw new Error(`Profile: failed to fetch expense submitted count: ${submittedResult.error.message}`);
+    }
+    if (approvedResult.error) {
+      throw new Error(`Profile: failed to fetch expense approved count: ${approvedResult.error.message}`);
     }
 
-    const rows = (data ?? []) as Array<{ status: string }>;
     return {
-      expensesSubmitted: rows.length,
-      expensesApproved: rows.filter((r) => r.status === "APPROVED").length,
+      expensesSubmitted: submittedResult.count ?? 0,
+      expensesApproved: approvedResult.count ?? 0,
     };
   },
 

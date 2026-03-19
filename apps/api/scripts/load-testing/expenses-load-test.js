@@ -7,7 +7,7 @@
  *
  * Run:
  *   k6 run expenses-load-test.js \
- *     -e BASE_URL=https://api.fieldtrack.meowsician.tech \
+ *     -e BASE_URL=https://api.getfieldtrack.app \
  *     -e EMPLOYEE_TOKEN=<JWT>
  *
  * NOTE: This test writes real data. Run against a staging environment or clean
@@ -50,7 +50,7 @@ export const options = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const BASE_URL = __ENV.BASE_URL || "https://api.fieldtrack.meowsician.tech";
+const BASE_URL = __ENV.BASE_URL || "https://api.getfieldtrack.app";
 // Each VU can use the same employee token in a load test (shared org context)
 const EMPLOYEE_TOKEN = __ENV.EMPLOYEE_TOKEN || "";
 

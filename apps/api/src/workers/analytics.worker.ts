@@ -2,6 +2,7 @@ import { Worker } from "bullmq";
 import type { Job } from "bullmq";
 import type { FastifyInstance } from "fastify";
 import { redisConnectionOptions } from "../config/redis.js";
+import { env } from "../config/env.js";
 import { supabaseServiceClient as supabase } from "../config/supabase.js";
 import { invalidateOrgAnalytics } from "../utils/cache.js";
 import {
@@ -16,7 +17,6 @@ import { moveToDeadLetter } from "./analytics.queue.js";
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SLOW_JOB_THRESHOLD_MS = 500;
-const WORKER_CONCURRENCY = 5;
 
 // ─── Worker Start Guard ───────────────────────────────────────────────────────
 
@@ -406,7 +406,19 @@ export function startAnalyticsWorker(app: FastifyInstance): Worker | null {
     (job) => processAnalyticsJob(job, app),
     {
       connection: redisConnectionOptions,
-      concurrency: WORKER_CONCURRENCY,
+      concurrency: env.ANALYTICS_WORKER_CONCURRENCY,
+      // lockDuration: maximum time (ms) a worker holds a job's lock before
+      // BullMQ considers it stalled and moves it back to the wait queue.
+      //
+      // 30 000 ms (30 s) is well above the longest realistic analytics job:
+      // ~7 DB queries × ~200 ms each ≈ 1.4 s typical; 30 s gives 20× headroom
+      // without masking genuinely stuck jobs (e.g. a hung DB connection or
+      // an infinite retry loop on a non-convergent session).
+      //
+      // NOTE: BullMQ v5 does not support a per-job `timeout` in
+      // defaultJobOptions — lockDuration on the Worker is the correct
+      // mechanism for bounding job execution time in this version.
+      lockDuration: 30_000,
       // Bound the retained job records in Redis to prevent unbounded growth.
       removeOnComplete: { count: 1000 },
       removeOnFail: { count: 5000 },
@@ -438,7 +450,7 @@ export function startAnalyticsWorker(app: FastifyInstance): Worker | null {
   });
 
   app.log.info(
-    { concurrency: WORKER_CONCURRENCY },
+    { concurrency: env.ANALYTICS_WORKER_CONCURRENCY },
     "Phase 21: BullMQ analytics worker started",
   );
 

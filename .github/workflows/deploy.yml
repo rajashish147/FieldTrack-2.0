@@ -265,6 +265,43 @@ jobs:
     needs: [build-image]
 
     steps:
+      - name: Validate deployment secrets
+        env:
+          FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
+          CORS_ORIGIN: ${{ secrets.CORS_ORIGIN }}
+        run: |
+          # ── Presence check ─────────────────────────────────────────────────
+          if [ -z "${FT_API_BASE_URL:-}" ]; then
+            echo "::error::FT_API_BASE_URL secret is not set. Deployment aborted."
+            exit 1
+          fi
+
+          # ── Domain guard — prevents accidental deploy to wrong environment ─
+          # Update this pattern if the production domain ever changes.
+          if ! echo "${FT_API_BASE_URL}" | grep -qE 'getfieldtrack\.app'; then
+            echo "::error::FT_API_BASE_URL '${FT_API_BASE_URL}' does not contain 'getfieldtrack.app'."
+            echo "::error::Refusing to deploy — this looks like a wrong-environment secret."
+            exit 1
+          fi
+
+          echo "✓ FT_API_BASE_URL validated: ${FT_API_BASE_URL}"
+
+          # ── CORS guard — prevents broken frontend→backend communication ────
+          # CORS_ORIGIN must include the production frontend origin.
+          # A missing or wrong value causes silent CORS failures in production.
+          if [ -z "${CORS_ORIGIN:-}" ]; then
+            echo "::error::CORS_ORIGIN secret is not set. Deployment aborted."
+            exit 1
+          fi
+
+          if ! echo "${CORS_ORIGIN}" | grep -qF 'app.getfieldtrack.app'; then
+            echo "::error::CORS_ORIGIN '${CORS_ORIGIN}' does not include 'app.getfieldtrack.app'."
+            echo "::error::Frontend will be blocked by CORS in production."
+            exit 1
+          fi
+
+          echo "✓ CORS_ORIGIN validated: ${CORS_ORIGIN}"
+
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -313,8 +350,8 @@ jobs:
             INFRA_HASH_FILE="$HOME/.fieldtrack-infra-hash"
             API_DOMAIN=$(grep -E '^API_DOMAIN=' "$INFRA_DIR/.env.monitoring" 2>/dev/null | tail -1 | cut -d '=' -f2-)
             FRONTEND_DOMAIN=$(grep -E '^FRONTEND_DOMAIN=' "$INFRA_DIR/.env.monitoring" 2>/dev/null | tail -1 | cut -d '=' -f2-)
-            API_DOMAIN=${API_DOMAIN:-api.fieldtrack.meowsician.tech}
-            FRONTEND_DOMAIN=${FRONTEND_DOMAIN:-fieldtrack.meowsician.tech}
+            API_DOMAIN=${API_DOMAIN:-api.getfieldtrack.app}
+            FRONTEND_DOMAIN=${FRONTEND_DOMAIN:-app.getfieldtrack.app}
 
             # ── Nginx ──────────────────────────────────────────────────────────
             echo "=== Syncing Nginx config ==="
@@ -419,7 +456,7 @@ jobs:
         env:
           FT_API_BASE_URL: ${{ secrets.FT_API_BASE_URL }}
         run: |
-          BASE_URL="${FT_API_BASE_URL:-https://api.fieldtrack.meowsician.tech}"
+          BASE_URL="${FT_API_BASE_URL:-https://api.getfieldtrack.app}"
           BASE_URL="${BASE_URL%/}"
           echo "Waiting for API to become ready..."
           for i in $(seq 1 30); do

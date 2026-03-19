@@ -57,6 +57,31 @@ API_DOMAIN="${API_DOMAIN#https://}"
 API_DOMAIN="${API_DOMAIN#http://}"
 
 # ---------------------------------------------------------------------------
+# Pre-flight: validate API_DOMAIN is consistent with API_BASE_URL.
+# Both values must agree on the hostname so nginx and the API agree on identity.
+# Misconfiguration here causes subtle failures (wrong cert, wrong CORS, etc.)
+# ---------------------------------------------------------------------------
+if [ -f "$ENV_FILE" ]; then
+    API_BASE_URL_VAL=$(grep -E '^API_BASE_URL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+    if [ -n "$API_BASE_URL_VAL" ]; then
+        # Extract just the hostname from the URL (strips scheme + trailing slash/path).
+        API_BASE_HOST="${API_BASE_URL_VAL#https://}"
+        API_BASE_HOST="${API_BASE_HOST#http://}"
+        API_BASE_HOST="${API_BASE_HOST%%/*}"
+        if [ "$API_DOMAIN" != "$API_BASE_HOST" ]; then
+            echo "ERROR: API_DOMAIN / API_BASE_URL mismatch — deployment aborted."
+            echo "  API_DOMAIN:   $API_DOMAIN"
+            echo "  API_BASE_URL: $API_BASE_URL_VAL  (resolved host: $API_BASE_HOST)"
+            echo ""
+            echo "API_DOMAIN must equal the hostname portion of API_BASE_URL."
+            echo "Fix both values in $ENV_FILE before retrying."
+            exit 1
+        fi
+        echo "✓ API_DOMAIN matches API_BASE_URL host ($API_DOMAIN)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Pre-flight: validate METRICS_SCRAPE_TOKEN consistency.
 # The token must match between API and Prometheus or scraping will silently
 # fail and alerts will go blind. Fail fast here instead of deploying broken

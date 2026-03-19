@@ -99,6 +99,19 @@ export function startDistanceWorker(app: FastifyInstance): Worker | null {
     {
       connection: redisConnectionOptions,
       concurrency: env.WORKER_CONCURRENCY,
+      // lockDuration: maximum time (ms) a worker holds a job's lock before
+      // BullMQ considers it stalled and moves it back to the wait queue.
+      //
+      // 30 000 ms (30 s) is chosen to be safely above the longest realistic
+      // job runtime: MAX_POINTS_PER_SESSION (50 000) ÷ CHUNK_SIZE (1 000)
+      // = 50 DB round-trips × ~200 ms each ≈ 10 s, plus Haversine computation
+      // with setImmediate yields.  30 s gives 3× headroom without masking
+      // genuinely stuck jobs (e.g. a hung DB connection).
+      //
+      // NOTE: BullMQ v5 does not support a per-job `timeout` in
+      // defaultJobOptions — lockDuration on the Worker is the correct
+      // mechanism for bounding job execution time in this version.
+      lockDuration: 30_000,
       // Limit the number of completed/failed job records retained in Redis to
       // prevent unbounded memory growth over time.
       removeOnComplete: { count: 1000 },

@@ -7,7 +7,7 @@
  *
  * Run:
  *   k6 run queue-impact-test.js \
- *     -e BASE_URL=https://api.fieldtrack.meowsician.tech \
+ *     -e BASE_URL=https://api.getfieldtrack.app \
  *     -e EMPLOYEE_TOKEN=<JWT> \
  *     -e ADMIN_TOKEN=<JWT>
  *
@@ -61,7 +61,7 @@ export const options = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const BASE_URL = __ENV.BASE_URL || "https://api.fieldtrack.meowsician.tech";
+const BASE_URL = __ENV.BASE_URL || "https://api.getfieldtrack.app";
 const EMPLOYEE_TOKEN = __ENV.EMPLOYEE_TOKEN || "";
 const ADMIN_TOKEN = __ENV.ADMIN_TOKEN || "";
 

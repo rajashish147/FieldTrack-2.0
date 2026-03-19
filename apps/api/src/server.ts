@@ -1,5 +1,5 @@
 import "./tracing.js";
-import { env } from "./config/env.js";
+import { env, logStartupConfig } from "./config/env.js";
 import { buildApp } from "./app.js";
 import { performStartupRecovery } from "./workers/distance.worker.js";
 
@@ -20,14 +20,13 @@ async function start(): Promise<void> {
 
   try {
     await app.listen({ port: env.PORT, host: "0.0.0.0" });
-    app.log.info(`Server running in ${env.NODE_ENV} mode`);
+    app.log.info(`Server running in ${env.APP_ENV} mode`);
 
-    // Phase 11: Deployment log marker — GITHUB_SHA is injected by GitHub Actions.
-    // Allows operators to correlate a running container to an exact git commit.
-    app.log.info(
-      { version: process.env["GITHUB_SHA"] ?? "manual" },
-      "Server booted",
-    );
+    // Structured startup config log — safe values only, no secrets.
+    // Logs APP_ENV, PORT, all base URLs, CORS policy, Tempo endpoint, and the
+    // deployed commit SHA so operators can verify the deployment in one glance
+    // at Grafana/Loki without needing to inspect the container environment.
+    logStartupConfig(app.log);
 
     // Phase 10: Crash recovery runs AFTER the server is fully listening.
     // Orphaned sessions are re-enqueued into Redis via BullMQ.

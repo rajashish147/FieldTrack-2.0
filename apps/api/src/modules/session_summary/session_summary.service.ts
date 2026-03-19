@@ -10,7 +10,6 @@ import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import type { RecalculateResponse } from "./session_summary.schema.js";
 import type { TenantContext } from "../../utils/tenant.js";
 import { performance } from "perf_hooks";
-import { analyticsMetricsRepository } from "../analytics/analytics.metrics.repository.js";
 import { invalidateOrgAnalytics } from "../../utils/cache.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -242,29 +241,24 @@ export const sessionSummaryService = {
         request.log.warn({ sessionId, error: msg }, "Failed to update latest session distance snapshot (HTTP path)");
       });
 
-    // 4c. UPSERT daily analytics metrics — fire-and-forget (non-critical path).
-    // The date is derived from checkin_at so the increment lands on the correct day.
-    const sessionDate = session.checkin_at.substring(0, 10);
-    Promise.all([
-      analyticsMetricsRepository.upsertEmployeeDailySessionMetrics({
-        organizationId: session.organization_id,
-        employeeId: session.employee_id,
-        date: sessionDate,
-        distanceDeltaKm: totalDistanceKm,
-        durationDeltaSeconds: durationSeconds,
-      }),
-      analyticsMetricsRepository.upsertOrgDailySessionMetrics({
-        organizationId: session.organization_id,
-        date: sessionDate,
-        distanceDeltaKm: totalDistanceKm,
-        durationDeltaSeconds: durationSeconds,
-      }),
-    ])
-      .then(() => invalidateOrgAnalytics(session.organization_id))
-      .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        request.log.warn({ sessionId, error: msg }, "Failed to update daily analytics after checkout");
-      });
+    // 4c. Invalidate org analytics cache so dashboards immediately reflect the
+    // recalculated distance/duration values.
+    //
+    // NOTE: employee_daily_metrics and org_daily_metrics are intentionally NOT
+    // updated here.  The BullMQ analytics worker (analytics.worker.ts) is the
+    // sole authoritative writer for those tables.  It performs a full idempotent
+    // recompute from source data (all closed sessions for the day) using absolute
+    // SET values rather than incrementing, which makes it safe under retries.
+    //
+    // Updating metrics here via increment_employee_session_metrics was removed
+    // because it caused double-counting on distance worker retries: each retry
+    // incremented sessions by 1 even though only one session actually closed.
+    // The analytics worker corrects that eventually, but the temporary inflation
+    // polluted dashboards and leaderboards during the retry window.
+    invalidateOrgAnalytics(session.organization_id).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      request.log.warn({ sessionId, error: msg }, "Failed to invalidate analytics cache after recalculation");
+    });
 
     // 5. Update observability counters
     metrics.incrementRecalculations();
@@ -375,33 +369,26 @@ export const sessionSummaryService = {
         fastifyApp.log.warn({ sessionId, error: msg }, "Worker: failed to update latest session distance snapshot");
       });
 
-    // 4c. UPSERT daily analytics metrics — fire-and-forget (non-critical path).
-    const sessionDate = (sessionData.checkin_at as string).substring(0, 10);
+    // 4c. Invalidate org analytics cache so dashboards pick up fresh distance
+    // values immediately after the distance worker writes them.
+    //
+    // NOTE: employee_daily_metrics / org_daily_metrics are NOT updated here.
+    // The dedicated analytics worker (analytics.worker.ts) is the sole writer
+    // for those tables.  It runs with a 10 s delay after checkout and performs
+    // a full idempotent recompute using absolute SET values — safe under retries.
+    //
+    // The increment calls that previously lived here were removed because they
+    // caused silent overcounting whenever BullMQ retried a failed distance job:
+    // each attempt would fire increment_employee_session_metrics again, pushing
+    // sessions count above the true value until the analytics worker corrected it.
     const sessionOrgId = sessionData.organization_id as string;
-    const sessionEmpId = sessionData.employee_id as string;
-    Promise.all([
-      analyticsMetricsRepository.upsertEmployeeDailySessionMetrics({
-        organizationId: sessionOrgId,
-        employeeId: sessionEmpId,
-        date: sessionDate,
-        distanceDeltaKm: totalDistanceKm,
-        durationDeltaSeconds: durationSeconds,
-      }),
-      analyticsMetricsRepository.upsertOrgDailySessionMetrics({
-        organizationId: sessionOrgId,
-        date: sessionDate,
-        distanceDeltaKm: totalDistanceKm,
-        durationDeltaSeconds: durationSeconds,
-      }),
-    ])
-      .then(() => invalidateOrgAnalytics(sessionOrgId))
-      .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        fastifyApp.log.warn(
-          { sessionId, error: msg },
-          "Worker: failed to update daily analytics after checkout",
-        );
-      });
+    invalidateOrgAnalytics(sessionOrgId).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      fastifyApp.log.warn(
+        { sessionId, error: msg },
+        "Worker: failed to invalidate analytics cache after distance calculation",
+      );
+    });
 
     // 5. Update observability counters
     metrics.incrementRecalculations();
