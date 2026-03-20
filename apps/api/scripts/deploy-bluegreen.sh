@@ -111,6 +111,17 @@ echo "Inactive container : $INACTIVE ($INACTIVE_PORT)"
 
 echo "[3/8] Starting inactive container..."
 
+# CI MODE: Ensure Docker network exists
+if [ "$CI_MODE" = "true" ]; then
+    echo "CI MODE: Ensuring Docker network exists..."
+    if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
+        docker network create "$NETWORK"
+        echo "✓ Created network: $NETWORK"
+    else
+        echo "✓ Network already exists: $NETWORK"
+    fi
+fi
+
 if docker ps -a --format '{{.Names}}' | grep -Eq "^${INACTIVE_NAME}$"; then
     docker rm -f "$INACTIVE_NAME"
 fi
