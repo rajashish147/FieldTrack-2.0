@@ -1,0 +1,10 @@
+# Ensure shell scripts always use LF line endings (Unix style)
+*.sh text eol=lf
+
+# Ensure other text files use LF
+*.ts text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
