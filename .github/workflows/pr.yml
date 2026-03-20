@@ -465,6 +465,44 @@ jobs:
             sleep 5
           done
 
+      # Generate SBOM using the same pinned Trivy image — no extra tool dependency.
+      - name: Generate SBOM (CycloneDX)
+        env:
+          IMAGE_NAME: fieldtrack-backend:pr-${{ github.event.number }}
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
+              --format cyclonedx \
+              --output /dev/stdout \
+              "$IMAGE_NAME" > sbom.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-pr-${{ github.event.number }}
+          path: sbom.json
+          retention-days: 30
+
+      - name: Save build provenance
+        env:
+          IMAGE_NAME: fieldtrack-backend:pr-${{ github.event.number }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          echo "commit=${{ github.sha }}" > provenance.txt
+          echo "pr=${{ github.event.number }}" >> provenance.txt
+          echo "image=${IMAGE_NAME}" >> provenance.txt
+          echo "digest=${IMAGE_DIGEST}" >> provenance.txt
+          echo "workflow=${{ github.workflow }}" >> provenance.txt
+          echo "run_id=${{ github.run_id }}" >> provenance.txt
+
+      - name: Upload provenance artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: provenance-pr-${{ github.event.number }}
+          path: provenance.txt
+          retention-days: 30
+
       # Container smoke test: start the production image and hit /health.
       # Catches crash-on-start bugs (missing native modules, broken build output,
       # OOM on startup) that Trivy cannot detect.
