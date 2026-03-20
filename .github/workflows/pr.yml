@@ -287,6 +287,15 @@ jobs:
             -e 's/__FRONTEND_DOMAIN__/app.test.local/g' \
             infra/nginx/fieldtrack.conf > /tmp/nginx-test.conf
 
+          # Fast-fail: verify every __PLACEHOLDER__ was substituted before
+          # passing the config to nginx. Catches new placeholders added to
+          # fieldtrack.conf that are not yet covered by the sed expressions.
+          if grep -q '__[A-Z_]*__' /tmp/nginx-test.conf; then
+            echo "ERROR: Unreplaced template placeholder(s) in substituted nginx config:"
+            grep -n '__[A-Z_]*__' /tmp/nginx-test.conf
+            exit 1
+          fi
+
           # --- Create mock Cloudflare Origin SSL artefacts ---
           # The production config uses Cloudflare Origin Certificates at:
           #   /etc/ssl/fieldtrack/origin.crt
@@ -389,11 +398,13 @@ jobs:
       - name: Capture and store image digest
         id: digest
         run: |
-          DIGEST=$(docker inspect \
-            fieldtrack-backend:pr-${{ github.event.number }} \
-            --format='{{.Id}}')
+          IMAGE_NAME="fieldtrack-backend:pr-${{ github.event.number }}"
+          DIGEST=$(docker inspect "$IMAGE_NAME" --format='{{.Id}}')
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
-          echo "Image digest: $DIGEST"
+          echo "=== Build traceability ==="
+          echo "  Commit SHA   : ${{ github.sha }}"
+          echo "  Image tag    : $IMAGE_NAME"
+          echo "  Image digest : $DIGEST"
           echo "$DIGEST" > image-digest.txt
 
       - name: Upload image digest artifact
@@ -403,7 +414,9 @@ jobs:
           path: image-digest.txt
           retention-days: 7
 
-      # Security scan: pinned Docker image (aquasec/trivy:0.49.1) — NOT trivy-action.
+      # Security scan: image pinned by immutable digest (NOT a mutable tag).
+      # aquasec/trivy:0.49.1 → sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc
+      # Digest resolved from Docker Hub manifest index (multi-platform).
       # Reasons:
       #   1. trivy-action has no reliable patch tags; floating tags (v0) are a
       #      supply-chain risk — a malicious release can silently take over.
@@ -418,7 +431,7 @@ jobs:
         run: |
           docker run --rm \
             -v /tmp/trivy-cache:/root/.cache \
-            aquasec/trivy:0.49.1 \
+            aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc \
             image --download-db-only
 
       - name: Scan image with Trivy (HIGH/CRITICAL, air-gapped)
@@ -430,7 +443,7 @@ jobs:
               --network none \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v /tmp/trivy-cache:/root/.cache \
-              aquasec/trivy:0.49.1 image \
+              aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
                 --skip-db-update \
                 --severity HIGH,CRITICAL \
                 --exit-code 1 \
