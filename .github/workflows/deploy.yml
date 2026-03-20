@@ -31,6 +31,10 @@ concurrency:
   group: production-deploy
   cancel-in-progress: false
 
+# Default to read-only. Jobs that need additional access declare it explicitly.
+permissions:
+  contents: read
+
 jobs:
   # ---------------------------------------------------------------------------
   # JOB: validate
@@ -416,16 +420,28 @@ jobs:
           retention-days: 90
 
       - name: Build & scan summary
+        if: always()
+        env:
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
-          echo "====================================================="
-          echo " Docker Build + Scan + Push: PASSED ✅"
-          echo "====================================================="
-          echo "  SHA:     ${{ steps.meta.outputs.sha_short }}"
-          echo "  Digest:  ${{ steps.digest.outputs.digest }}"
-          echo "  Target:  production"
-          echo "  Trivy:   no HIGH/CRITICAL CVEs"
-          echo "  Pushed:  ghcr.io/${{ github.repository_owner }}/fieldtrack-backend"
-          echo "====================================================="
+          SBOM_COUNT=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('sbom.json'))
+    print(len(d.get('components', [])))
+except: print('n/a')
+" 2>/dev/null || echo 'n/a')
+          {
+            echo "## Build · Scan · Push"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Commit SHA | \`${{ github.sha }}\` |"
+            echo "| Image tag | \`fieldtrack-backend:${{ steps.meta.outputs.sha_short }}\` |"
+            echo "| Image digest | \`${IMAGE_DIGEST}\` |"
+            echo "| SBOM components | ${SBOM_COUNT} |"
+            echo "| Trivy gate | HIGH,CRITICAL / exit-code 1 |"
+            echo "| Registry | ghcr.io/${{ github.repository_owner }}/fieldtrack-backend |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
   # JOB: deploy

@@ -39,6 +39,10 @@ concurrency:
   group: pr-${{ github.ref }}
   cancel-in-progress: true
 
+# Default to read-only. Jobs that need additional access declare it explicitly.
+permissions:
+  contents: read
+
 jobs:
   # ---------------------------------------------------------------------------
   # JOB: detect-changes
@@ -502,6 +506,29 @@ jobs:
           name: provenance-pr-${{ github.event.number }}
           path: provenance.txt
           retention-days: 30
+
+      - name: Production simulation summary
+        if: always()
+        env:
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          SBOM_COUNT=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('sbom.json'))
+    print(len(d.get('components', [])))
+except: print('n/a')
+" 2>/dev/null || echo 'n/a')
+          {
+            echo "## Production Simulation"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Commit SHA | \`${{ github.sha }}\` |"
+            echo "| Image tag | \`fieldtrack-backend:pr-${{ github.event.number }}\` |"
+            echo "| Image digest | \`${IMAGE_DIGEST}\` |"
+            echo "| SBOM components | ${SBOM_COUNT} |"
+            echo "| Trivy gate | HIGH,CRITICAL / exit-code 1 |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # Container smoke test: start the production image and hit /health.
       # Catches crash-on-start bugs (missing native modules, broken build output,
