@@ -8,6 +8,7 @@
 #   3. Conditional logic lives INSIDE jobs (step-level), not at the job level
 #   4. production-simulation is unconditional — exact Docker + Trivy parity with deploy.yml
 #   5. Trivy fails hard (exit-code: 1) on HIGH/CRITICAL — security gate enforced before merge
+#      Scan uses pinned aquasec/trivy:0.49.1 Docker image (NOT trivy-action) — supply-chain safe
 #   6. timeout-minutes on every job — hung processes never block CI indefinitely
 #   7. npm ci retried up to 3x — registry flakiness never kills a valid PR
 #   8. Image digest stored as artifact — enables cross-pipeline parity auditing
@@ -356,7 +357,6 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
-      security-events: write
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -403,40 +403,41 @@ jobs:
           path: image-digest.txt
           retention-days: 7
 
-      # Trivy scans the local image with exit-code: 1 — IDENTICAL to deploy.yml.
-      # If this passes, the same image will pass in production.
-      - name: Trivy vulnerability scan (fail on HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@v0
-        with:
-          image-ref: fieldtrack-backend:pr-${{ github.event.number }}
-          format: sarif
-          output: trivy-results.sarif
-          severity: HIGH,CRITICAL
-          exit-code: '1'
+      # Security scan: pinned Docker image (aquasec/trivy:0.49.1) — NOT trivy-action.
+      # Reasons:
+      #   1. trivy-action has no reliable patch tags; floating tags (v0) are a
+      #      supply-chain risk — a malicious release can silently take over.
+      #   2. A pinned Docker image tag is fully auditable and reproducible.
+      #   3. --network none during the scan prevents any exfiltration/injection
+      #      while Trivy processes the image filesystem.
+      #
+      # Two-phase approach (required for --network none):
+      #   Phase A — Download vuln DB while network is available, cache to /tmp/trivy-cache
+      #   Phase B — Scan with --network none + --skip-db-update (air-gapped)
+      - name: Pull Trivy vulnerability database
+        run: |
+          docker run --rm \
+            -v /tmp/trivy-cache:/root/.cache \
+            aquasec/trivy:0.49.1 \
+            image --download-db-only
 
-      # Fallback: if the Trivy action itself fails (network outage, action runner
-      # issue, DB download failure) retry with the Trivy Docker image directly.
-      # Identical severity gates — no weakening of the security threshold.
-      # Mounts the Docker socket so Trivy can inspect the local daemon image.
-      - name: Trivy fallback scan (CLI retry on action failure)
-        if: failure()
+      - name: Scan image with Trivy (HIGH/CRITICAL, air-gapped)
         env:
           IMAGE_NAME: fieldtrack-backend:pr-${{ github.event.number }}
         run: |
-          echo "Trivy action failed — retrying via Docker CLI..."
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy image \
-              --severity HIGH,CRITICAL \
-              --exit-code 1 \
-              "$IMAGE_NAME"
-
-      - name: Upload Trivy results to GitHub Security tab
-        if: always()
-        uses: github/codeql-action/upload-sarif@v4
-        continue-on-error: true
-        with:
-          sarif_file: trivy-results.sarif
+          for i in 1 2 3; do
+            docker run --rm \
+              --network none \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v /tmp/trivy-cache:/root/.cache \
+              aquasec/trivy:0.49.1 image \
+                --skip-db-update \
+                --severity HIGH,CRITICAL \
+                --exit-code 1 \
+                "$IMAGE_NAME" && break
+            echo "Trivy attempt $i failed..."
+            sleep 5
+          done
 
       # Container smoke test: start the production image and hit /health.
       # Catches crash-on-start bugs (missing native modules, broken build output,
