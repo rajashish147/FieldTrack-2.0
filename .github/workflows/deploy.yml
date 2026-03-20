@@ -300,7 +300,7 @@ jobs:
       # Phase 2: Trivy scans the local image. exit-code: 1 hard-fails the job.
       # IDENTICAL severity gates to pr.yml — the same image passes both or neither.
       - name: Trivy vulnerability scan (fail on HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
           format: sarif

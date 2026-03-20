@@ -286,32 +286,26 @@ jobs:
             -e 's/__FRONTEND_DOMAIN__/app.test.local/g' \
             infra/nginx/fieldtrack.conf > /tmp/nginx-test.conf
 
-          # --- Create mock Let's Encrypt SSL artefacts ---
-          # The production nginx config includes TLS directives that reference
-          # real cert/key/dhparam paths. nginx -t reads these files, so they
-          # must exist and contain valid PEM data. They are never served.
-          MOCK_LE=/tmp/mock-letsencrypt
-          mkdir -p "${MOCK_LE}/live/api.test.local"
+          # --- Create mock Cloudflare Origin SSL artefacts ---
+          # The production config uses Cloudflare Origin Certificates stored at:
+          #   /etc/ssl/fieldtrack/origin.crt
+          #   /etc/ssl/fieldtrack/origin.key
+          # nginx -t must be able to open these paths, so we generate
+          # a self-signed stand-in. These files are never served — they
+          # only satisfy the nginx config-test parser.
+          MOCK_SSL=/tmp/mock-fieldtrack-ssl
+          mkdir -p "${MOCK_SSL}"
 
-          # Self-signed cert + key — nginx -t validates the PEM structure
           openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
-            -keyout "${MOCK_LE}/live/api.test.local/privkey.pem" \
-            -out    "${MOCK_LE}/live/api.test.local/fullchain.pem" \
+            -keyout "${MOCK_SSL}/origin.key" \
+            -out    "${MOCK_SSL}/origin.crt" \
             -subj   "/CN=api.test.local" 2>/dev/null
 
-          # options-ssl-nginx.conf is included as a snippet; empty is fine for -t
-          touch "${MOCK_LE}/options-ssl-nginx.conf"
-
-          # Minimal DH params (512-bit, CI only — never used in production)
-          openssl dhparam -out "${MOCK_LE}/ssl-dhparams.pem" 512 2>/dev/null
-
-          # --- Run nginx -t with every required file mounted ---
+          # --- Run nginx -t with the two SSL files mounted ---
           docker run --rm \
             -v /tmp/nginx-test.conf:/etc/nginx/conf.d/default.conf:ro \
-            -v "${MOCK_LE}/live/api.test.local/fullchain.pem":/etc/letsencrypt/live/api.test.local/fullchain.pem:ro \
-            -v "${MOCK_LE}/live/api.test.local/privkey.pem":/etc/letsencrypt/live/api.test.local/privkey.pem:ro \
-            -v "${MOCK_LE}/options-ssl-nginx.conf":/etc/letsencrypt/options-ssl-nginx.conf:ro \
-            -v "${MOCK_LE}/ssl-dhparams.pem":/etc/letsencrypt/ssl-dhparams.pem:ro \
+            -v "${MOCK_SSL}/origin.crt":/etc/ssl/fieldtrack/origin.crt:ro \
+            -v "${MOCK_SSL}/origin.key":/etc/ssl/fieldtrack/origin.key:ro \
             nginx:stable-alpine nginx -t 2>&1
           echo "✓ Nginx config syntax OK"
 
@@ -404,7 +398,7 @@ jobs:
       # Trivy scans the local image with exit-code: 1 — IDENTICAL to deploy.yml.
       # If this passes, the same image will pass in production.
       - name: Trivy vulnerability scan (fail on HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: fieldtrack-backend:pr-${{ github.event.number }}
           format: sarif
