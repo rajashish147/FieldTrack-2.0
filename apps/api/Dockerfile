@@ -1,62 +1,99 @@
 # Build context: monorepo root (docker build -f apps/api/Dockerfile .)
-# ---- Stage 1: Build ----
+#
+# Three-stage build:
+#   1. builder      — compiles TypeScript (full devDependencies available)
+#   2. runtime-deps — installs production-only node_modules (no devDeps, no build tools)
+#   3. production   — gcr.io/distroless/nodejs24-debian12:nonroot
+#
+# Security model:
+#   • Stages 1–2 are ephemeral; Trivy only scans the final (production) image.
+#   • Distroless contains only the Node.js 24 runtime binary + minimal glibc/libssl.
+#     No shell, no package manager, no tar, no apt, no curl — the entire OS toolchain
+#     CVE surface present in bookworm-slim is eliminated.
+#   • :nonroot variant runs as uid 65532 (nobody) by default — no USER directive needed.
+#   • HEALTHCHECK uses Node built-in `http` module (curl unavailable in distroless).
+
+# ---- Stage 1: Build --------------------------------------------------------
 # Pinned to specific version to prevent supply chain attacks.
-# Debian slim avoids Alpine's busybox/apk vulnerability churn in Trivy.
 FROM node:24.2.0-bookworm-slim AS builder
 
 WORKDIR /workspace
 
-# Install workspace dependencies first (for layer caching)
+# Copy package manifests first for layer-cached dependency install.
 COPY package.json package-lock.json ./
 COPY apps/api/package.json ./apps/api/
 COPY packages/types/package.json ./packages/types/
 
 RUN npm ci --workspace apps/api --workspace packages/types --include-workspace-root=false
 
-# Copy shared types source and compile
+# Compile shared types first (apps/api depends on @fieldtrack/types at runtime).
 COPY packages/types/tsconfig.json ./packages/types/
 COPY packages/types/src/ ./packages/types/src/
 RUN npm run build -w packages/types
 
+# Compile API.
 WORKDIR /workspace/apps/api
 COPY apps/api/tsconfig.json ./
 COPY apps/api/src ./src
-
 RUN npm run build
 
-# ---- Stage 2: Production ----
-# Pinned to specific version to prevent supply chain attacks.
-# Keep runtime on the same distro family as the builder to avoid ABI drift.
-FROM node:24.2.0-bookworm-slim AS production
+# ---- Stage 2: Production dependencies -------------------------------------
+# Separate stage: installs --omit=dev so distroless never needs npm or a shell.
+# mkdir -p guards ensure workspace subdirectories always exist for the COPY in
+# stage 3, even when npm hoists all deps to the root node_modules.
+FROM node:24.2.0-bookworm-slim AS runtime-deps
 
-WORKDIR /app
-
-ENV NODE_ENV=production
+WORKDIR /workspace
 
 COPY package.json package-lock.json ./
 COPY apps/api/package.json ./apps/api/
 COPY packages/types/package.json ./packages/types/
 
-RUN npm ci --omit=dev --workspace apps/api --workspace packages/types --include-workspace-root=false
+RUN npm ci \
+      --omit=dev \
+      --workspace apps/api \
+      --workspace packages/types \
+      --include-workspace-root=false \
+  && mkdir -p apps/api/node_modules packages/types/node_modules \
+  && npm cache clean --force
 
-COPY --from=builder /workspace/apps/api/dist ./apps/api/dist
-COPY --from=builder /workspace/packages/types/dist ./packages/types/dist
+# ---- Stage 3: Production (distroless) -------------------------------------
+# gcr.io/distroless/nodejs24-debian12:nonroot contains only:
+#   • Node.js 24 runtime binary (at /nodejs/bin/node)
+#   • Minimal glibc + libssl from Debian 12
+#   • No shell, no package manager, no OS utilities
+# Trivy finds near-zero OS CVEs in this image.
+# ENTRYPOINT is ["/nodejs/bin/node"]; CMD supplies the script path argument.
+FROM gcr.io/distroless/nodejs24-debian12:nonroot AS production
 
-# Phase 11: curl required for Docker HEALTHCHECK.
-# Install only the minimal runtime package and clean apt metadata to keep the
-# production image small and reduce residual scanner noise.
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl \
-  && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Package manifests — required for npm workspace module resolution at runtime.
+# The @fieldtrack/types symlink in node_modules points to ../../packages/types;
+# Node.js resolves it to /app/packages/types which is present below.
+COPY package.json ./
+COPY apps/api/package.json ./apps/api/
+COPY packages/types/package.json ./packages/types/
+
+# Production node_modules (root-hoisted + workspace-specific).
+# BuildKit COPY preserves symlinks, so workspace links resolve correctly.
+COPY --from=runtime-deps /workspace/node_modules            ./node_modules
+COPY --from=runtime-deps /workspace/apps/api/node_modules   ./apps/api/node_modules
+COPY --from=runtime-deps /workspace/packages/types/node_modules ./packages/types/node_modules
+
+# Compiled application output.
+COPY --from=builder /workspace/apps/api/dist             ./apps/api/dist
+COPY --from=builder /workspace/packages/types/dist       ./packages/types/dist
+
+# Healthcheck script — uses Node built-in http (curl not available in distroless).
+COPY apps/api/healthcheck.js ./healthcheck.js
 
 EXPOSE 3000
 
-# Phase 11: Docker healthcheck — probes /health every 30s.
-# start-period gives the Node process time to connect to Redis and boot.
-# CI/CD pipelines and orchestrators (ECS, Kubernetes) use this to gate traffic.
+# Exec-form required — distroless has no shell to expand shell-form commands.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:3000/health || exit 1
+  CMD ["/nodejs/bin/node", "/app/healthcheck.js"]
 
-USER node
-
-CMD ["node", "apps/api/dist/server.js"]
+CMD ["apps/api/dist/server.js"]
