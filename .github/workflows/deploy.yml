@@ -487,7 +487,7 @@ jobs:
             cd "$DEPLOY_ROOT"
             git fetch origin
             git reset --hard origin/master
-            chmod +x apps/api/scripts/validate-env.sh
+            chmod +x apps/api/scripts/*.sh
             echo "=== Pre-deploy environment validation ==="
             ./apps/api/scripts/validate-env.sh --check-monitoring
             echo "✓ Environment contract validated"
@@ -503,7 +503,7 @@ jobs:
             T0=$(date +%s)
             export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
             cd "$DEPLOY_ROOT"
-            chmod +x apps/api/scripts/deploy-bluegreen.sh
+            chmod +x apps/api/scripts/*.sh
             # Environment already validated in previous step
             ./apps/api/scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
             echo "✓ Deploy completed in $(($(date +%s) - T0))s"
@@ -705,6 +705,6 @@ jobs:
             set -euo pipefail
             export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
             cd "$DEPLOY_ROOT"
-            chmod +x apps/api/scripts/rollback.sh
+            chmod +x apps/api/scripts/*.sh
             ./apps/api/scripts/rollback.sh --auto
             echo "✓ Rollback completed."

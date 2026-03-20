@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ---------------------------------------------------------------------------
 # load-env.sh — Centralised environment loader for FieldTrack deploy scripts
 #
@@ -65,28 +65,9 @@ echo "✓ API_BASE_URL is set"
 echo "✓ CORS_ORIGIN is set"
 
 # ── Derive API_HOSTNAME from API_BASE_URL ────────────────────────────────────
-# Use Node.js URL parser for deterministic hostname extraction — matches backend
-# behavior exactly (env.ts uses new URL().host). This prevents sed/bash parsing
-# drift that caused production mismatches.
-API_HOSTNAME=$(node -e "
-try {
-  const url = new URL(process.argv[1]);
-  console.log(url.host);
-} catch (err) {
-  console.error('ERROR: Invalid API_BASE_URL format');
-  process.exit(1);
-}
-" "$API_BASE_URL" 2>&1)
-
-# Capture Node exit code before any other commands
-_NODE_EXIT=$?
-
-if [ $_NODE_EXIT -ne 0 ]; then
-    echo "❌ Failed to parse API_BASE_URL='$API_BASE_URL'"
-    echo "   Node.js URL parser rejected this value."
-    echo "   Expected format: https://api.example.com or http://localhost:3000"
-    exit 1
-fi
+# Use bash-safe parsing (no Node.js dependency for VPS compatibility)
+# Strip protocol (http:// or https://) and take first path segment
+API_HOSTNAME=$(echo "$API_BASE_URL" | sed -E 's|^https?://||' | cut -d'/' -f1)
 
 # Validate: result must be a non-empty bare hostname (or host:port).
 # Reject if it contains whitespace, path separators, credential markers (@),

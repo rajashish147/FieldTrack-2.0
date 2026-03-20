@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # =============================================================================
 # validate-env.sh — FieldTrack 2.0 environment contract validator
 #
@@ -148,21 +148,11 @@ else
         fail "API_BASE_URL must start with https:// or http://"
     fi
 
-    # Derive API_HOSTNAME using SAME Node logic as load-env.sh for consistency
-    DERIVED_HOSTNAME=$(node -e "
-try {
-  const url = new URL(process.argv[1]);
-  console.log(url.host);
-} catch (err) {
-  console.error('ERROR: Invalid API_BASE_URL format');
-  process.exit(1);
-}
-" "$API_BASE_URL" 2>&1)
+    # Derive API_HOSTNAME using bash-safe parsing (no Node.js dependency)
+    # Strip protocol (http:// or https://) and take first path segment
+    DERIVED_HOSTNAME=$(echo "$API_BASE_URL" | sed -E 's|^https?://||' | cut -d'/' -f1)
 
-    if [ $? -ne 0 ]; then
-        fail "Cannot derive API_HOSTNAME from API_BASE_URL='$API_BASE_URL'"
-        fail "  Node.js URL parser rejected this value"
-    elif [[ -z "$DERIVED_HOSTNAME" ]]; then
+    if [[ -z "$DERIVED_HOSTNAME" ]]; then
         fail "Cannot derive API_HOSTNAME from API_BASE_URL='$API_BASE_URL'"
     elif [[ "$DERIVED_HOSTNAME" =~ [[:space:]/@?#] ]]; then
         fail "Derived API_HOSTNAME contains invalid characters: '$DERIVED_HOSTNAME'"
