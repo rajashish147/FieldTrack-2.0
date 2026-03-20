@@ -238,7 +238,7 @@ jobs:
 
       - name: Upload build artifact
         if: steps.scope.outputs.skip != 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: frontend-build-pr-${{ github.event.number }}
           path: apps/web/.next/
@@ -337,6 +337,8 @@ jobs:
           HASH=$(sha256sum /tmp/nginx-test.conf | cut -d' ' -f1)
           echo "nginx_config_hash=${HASH}"
           echo "nginx_config_hash=${HASH}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate docker-compose config
         if: steps.scope.outputs.skip != 'true'
         run: |
           docker compose \
@@ -417,7 +419,7 @@ jobs:
           echo "$DIGEST" > image-digest.txt
 
       - name: Upload image digest artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: image-digest-pr-${{ github.event.number }}
           path: image-digest.txt
@@ -455,8 +457,9 @@ jobs:
         env:
           IMAGE_NAME: fieldtrack-backend:pr-${{ github.event.number }}
         run: |
+          SCAN_PASSED=false
           for i in 1 2 3; do
-            docker run --rm \
+            if docker run --rm \
               --network none \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v /tmp/trivy-cache:/root/.cache \
@@ -464,10 +467,17 @@ jobs:
                 --skip-db-update \
                 --severity HIGH,CRITICAL \
                 --exit-code 1 \
-                "$IMAGE_NAME" && break
+                "$IMAGE_NAME"; then
+              SCAN_PASSED=true
+              break
+            fi
             echo "Trivy attempt $i failed..."
-            sleep 5
+            [ "$i" -lt 3 ] && sleep 5
           done
+          if [ "$SCAN_PASSED" != "true" ]; then
+            echo "::error::Trivy scan failed after 3 attempts — HIGH/CRITICAL vulnerabilities found or scan error."
+            exit 1
+          fi
 
       # Generate SBOM using the same pinned Trivy image — no extra tool dependency.
       - name: Generate SBOM (CycloneDX)

@@ -327,8 +327,9 @@ jobs:
         env:
           IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
         run: |
+          SCAN_PASSED=false
           for i in 1 2 3; do
-            docker run --rm \
+            if docker run --rm \
               --network none \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v /tmp/trivy-cache:/root/.cache \
@@ -336,10 +337,17 @@ jobs:
                 --skip-db-update \
                 --severity HIGH,CRITICAL \
                 --exit-code 1 \
-                "$IMAGE_NAME" && break
+                "$IMAGE_NAME"; then
+              SCAN_PASSED=true
+              break
+            fi
             echo "Trivy attempt $i failed..."
-            sleep 5
+            [ "$i" -lt 3 ] && sleep 5
           done
+          if [ "$SCAN_PASSED" != "true" ]; then
+            echo "::error::Trivy scan failed after 3 attempts — HIGH/CRITICAL vulnerabilities found or scan error."
+            exit 1
+          fi
 
       # Phase 3: Scan passed — push the exact scanned image (same layer digests).
       # Uses docker tag + push rather than rebuilding to guarantee what was scanned
@@ -632,7 +640,7 @@ except: print('n/a')
 
       - name: Upload smoke test report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: smoke-test-report-${{ github.sha }}
           path: smoke-report.json
