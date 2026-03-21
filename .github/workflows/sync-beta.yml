@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - master
+  # Fallback: fires directly when the auto-merge workflow completes.
+  # Handles the case where GitHub blocks push-triggered workflows from
+  # Actions-initiated commits (GITHUB_TOKEN restriction).
+  workflow_run:
+    workflows: ["Auto Merge PR"]
+    types:
+      - completed
 
 permissions:
   contents: write

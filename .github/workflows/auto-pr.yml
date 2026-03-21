@@ -73,6 +73,7 @@ jobs:
 
       - name: Create PR if not exists
         if: steps.check.outputs.pr == '' && steps.summary.outputs.empty != 'true'
+        id: create
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -99,6 +100,16 @@ jobs:
             --head beta \
             --title "🚀 Release: beta → master" \
             --body-file body.txt
+
+          # Get the newly created PR number
+          NEW_PR=$(gh pr list \
+            --base master \
+            --head beta \
+            --state open \
+            --json number \
+            --jq '.[0].number')
+
+          echo "pr=$NEW_PR" >> $GITHUB_OUTPUT
 
       - name: Update PR summary
         if: steps.check.outputs.pr != '' && steps.summary.outputs.empty != 'true'
@@ -132,3 +143,28 @@ jobs:
 
           # Update PR
           gh pr edit "$PR" --body-file final_body.txt
+
+      - name: Enable auto-merge
+        if: steps.summary.outputs.empty != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR=${{ steps.check.outputs.pr }}
+          if [ -z "$PR" ]; then
+            PR=${{ steps.create.outputs.pr }}
+          fi
+
+          if [ -z "$PR" ]; then
+            echo "No PR found, skipping auto-merge"
+            exit 0
+          fi
+
+          echo "Enabling auto-merge for PR #$PR"
+
+          # Enable auto-merge (GitHub will merge when checks pass)
+          gh pr merge "$PR" \
+            --auto \
+            --squash \
+            --delete-branch=false
+
+          echo "✓ Auto-merge enabled - GitHub will merge when all checks pass"

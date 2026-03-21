@@ -20,68 +20,13 @@ concurrency:
 jobs:
   merge:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == false
+    if: >
+      github.event.pull_request.merged == false &&
+      github.event.pull_request.base.ref == 'master' &&
+      github.event.pull_request.head.ref == 'beta' &&
+      github.event.pull_request.draft == false
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate PR scope
-        if: >
-          github.event.pull_request.base.ref != 'master' ||
-          github.event.pull_request.head.ref != 'beta'
-        run: exit 0
-
-      - name: Skip draft PR
-        if: github.event.pull_request.draft == true
-        run: exit 0
-
-      - name: Wait until required checks pass
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR=${{ github.event.pull_request.number }}
-
-          for i in {1..20}; do
-            STATUS=$(gh pr view "$PR" --json statusCheckRollup -q '
-              [.statusCheckRollup[]
-              | select(
-                  .name != "Auto Merge PR / merge" and
-                  .status == "COMPLETED"
-                )
-              | .conclusion]')
-
-            FAILING=$(echo "$STATUS" | grep -vc "SUCCESS" || true)
-            echo "Failing checks: $FAILING"
-
-            if [ "$FAILING" -eq 0 ] && [ -n "$STATUS" ]; then
-              echo "All required checks passed"
-              break
-            fi
-
-            if [ "$i" = "20" ]; then
-              echo "Checks did not pass after timeout"
-              exit 1
-            fi
-
-            sleep 10
-          done
-
-      - name: Mark PR ready for review
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR=${{ github.event.pull_request.number }}
-
-          IS_DRAFT=$(gh pr view "$PR" --json isDraft -q .isDraft)
-
-          if [ "$IS_DRAFT" = "true" ]; then
-            echo "Marking PR as ready for review"
-            gh pr ready "$PR"
-            sleep 5
-          else
-            echo "PR already ready"
-          fi
-
       - name: Enable auto-merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -94,3 +39,5 @@ jobs:
             --auto \
             --squash \
             --delete-branch=false
+
+          echo "✓ Auto-merge enabled - GitHub will merge when all checks pass"
