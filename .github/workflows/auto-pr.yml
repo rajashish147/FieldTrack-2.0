@@ -26,7 +26,7 @@ jobs:
       - name: Check existing PR
         id: check
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
         run: |
           PR=$(gh pr list \
             --base master \
@@ -40,7 +40,7 @@ jobs:
       - name: Generate commit summary
         id: summary
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
         run: |
           PR=${{ steps.check.outputs.pr }}
 
@@ -75,7 +75,7 @@ jobs:
         if: steps.check.outputs.pr == '' && steps.summary.outputs.empty != 'true'
         id: create
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
         run: |
           echo "## 🚀 Automated Release PR" > body.txt
           echo "" >> body.txt
@@ -114,7 +114,7 @@ jobs:
       - name: Update PR summary
         if: steps.check.outputs.pr != '' && steps.summary.outputs.empty != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
         run: |
           PR=${{ steps.check.outputs.pr }}
 
@@ -147,7 +147,7 @@ jobs:
       - name: Enable auto-merge
         if: steps.summary.outputs.empty != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
         run: |
           PR=${{ steps.check.outputs.pr }}
           if [ -z "$PR" ]; then
@@ -168,3 +168,18 @@ jobs:
             --delete-branch=false
 
           echo "✓ Auto-merge enabled - GitHub will merge when all checks pass"
+
+      - name: Debug PR state
+        if: steps.summary.outputs.empty != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          PR=${{ steps.check.outputs.pr }}
+          if [ -z "$PR" ]; then
+            PR=${{ steps.create.outputs.pr }}
+          fi
+
+          if [ -n "$PR" ]; then
+            echo "=== PR State Debug ==="
+            gh pr view "$PR" --json state,mergeable,autoMergeRequest,isDraft
+          fi
