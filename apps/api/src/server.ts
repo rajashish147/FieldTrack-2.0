@@ -1,8 +1,12 @@
 import "./tracing.js";
-import { env, logStartupConfig } from "./config/env.js";
+import { env, getEnv, logStartupConfig } from "./config/env.js";
 import { buildApp } from "./app.js";
 
 async function start(): Promise<void> {
+  // Force environment validation at process startup so production fails fast.
+  // Lazy env loading remains useful for tests and CI that do not run server.ts.
+  getEnv();
+
   const app = await buildApp();
 
   // Phase 11: Graceful shutdown.
@@ -27,19 +31,25 @@ async function start(): Promise<void> {
     // at Grafana/Loki without needing to inspect the container environment.
     logStartupConfig(app.log);
 
-    // Phase 10: Crash recovery runs AFTER the server is fully listening.
-    // Orphaned sessions are re-enqueued into Redis via BullMQ.
-    // performStartupRecovery is non-blocking internally (setImmediate batching)
-    // so this call returns almost immediately and enqueuing happens in the
-    // background on subsequent event loop ticks.
-    // Skip in CI mode when Redis is unavailable.
-    if (process.env.SKIP_EXTERNAL_SERVICES !== "true") {
+    // Start workers and recovery explicitly after the server is listening.
+    // This keeps worker lifecycle deterministic and prevents import-time starts.
+    const skipExternalServices = process.env.SKIP_EXTERNAL_SERVICES === "true";
+    const isCiMode = process.env.CI_MODE === "true" || process.env.CI === "true";
+    if (!skipExternalServices && !isCiMode) {
+      const { startWorkers } = await import("./workers/startup.js");
       const { performStartupRecovery } = await import("./workers/distance.worker.js");
       const { replayPendingRetryIntents } = await import("./workers/retry-intents.js");
       const { startRetryIntentCleanupJob } = await import("./workers/retry-cleanup.job.js");
+
+      await startWorkers(app);
       performStartupRecovery(app);
       void replayPendingRetryIntents(app);
       startRetryIntentCleanupJob(app);
+    } else {
+      app.log.info(
+        { skipExternalServices, isCiMode },
+        "Background workers and recovery are disabled in this runtime mode",
+      );
     }
   } catch (error) {
     app.log.error(error, "Failed to start server");

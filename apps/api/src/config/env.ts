@@ -450,27 +450,69 @@ function parseEnv(): EnvConfig {
   return result.data;
 }
 
-export const env: EnvConfig = parseEnv();
+// ─── Lazy singleton ───────────────────────────────────────────────────────────
+//
+// Validation is deferred to the first property access on `env` rather than
+// running at import time.  This eliminates module-level side-effects so that
+// importing env.ts in tests or CI tooling no longer crashes when env vars
+// are absent.  Production safety is preserved: any code path that reads
+// `env.PORT`, `env.SUPABASE_URL`, etc. will trigger parseEnv() and fail
+// immediately if the environment is misconfigured.
+
+let _envCache: EnvConfig | undefined;
+
+export function getEnv(): EnvConfig {
+  if (!_envCache) {
+    _envCache = parseEnv();
+  }
+  return _envCache;
+}
+
+/**
+ * Validated environment configuration.
+ *
+ * Backed by a Proxy so that validation runs lazily on first property access
+ * rather than at module import time.  All existing `env.PORT`, `env.APP_ENV`
+ * consumers work unchanged.
+ */
+export const env: EnvConfig = new Proxy({} as EnvConfig, {
+  get(_target, prop, receiver) {
+    return Reflect.get(getEnv(), prop, receiver);
+  },
+  has(_target, prop) {
+    return prop in getEnv();
+  },
+  ownKeys() {
+    return Reflect.ownKeys(getEnv());
+  },
+  getOwnPropertyDescriptor(_target, prop) {
+    const e = getEnv();
+    if (prop in e) {
+      return {
+        configurable: true,
+        enumerable: true,
+        value: (e as Record<string | symbol, unknown>)[prop],
+      };
+    }
+    return undefined;
+  },
+});
 
 // ─── Derived helpers ──────────────────────────────────────────────────────────
 
 /**
  * Parsed, trimmed list of allowed CORS origins.
- *
- * Derived from CORS_ORIGIN (comma-separated string) at startup.
- *
- * - Non-empty → CORS plugin uses this explicit allow-list.
- * - Empty     → CORS plugin falls back to hardcoded dev-safe origins
- *               (see cors.plugin.ts).  Wildcard `origin: true` is never used.
- *
- * @example
- *   // cors.plugin.ts
- *   import { env, corsOrigins } from "../../config/env.js";
- *   const origins = corsOrigins.length > 0 ? corsOrigins : DEV_CORS_ORIGINS;
+ * Lazy — computed on first call and cached.
  */
-export const corsOrigins: string[] = env.CORS_ORIGIN.split(",")
-  .map((o) => o.trim())
-  .filter(Boolean);
+let _corsOriginsCache: string[] | undefined;
+export function getCorsOrigins(): string[] {
+  if (!_corsOriginsCache) {
+    _corsOriginsCache = env.CORS_ORIGIN.split(",")
+      .map((o) => o.trim())
+      .filter(Boolean);
+  }
+  return _corsOriginsCache;
+}
 
 // ─── Public / private config split ────────────────────────────────────────────
 //
@@ -483,47 +525,37 @@ export const corsOrigins: string[] = env.CORS_ORIGIN.split(",")
 
 /**
  * Safe-to-expose configuration values.
- *
- * Contains only non-secret, deployment-identity fields.  These values tell
- * callers WHERE the service lives and WHAT version it is, without revealing
- * any credentials.
- *
- * Intended uses:
- *   - Startup log (deployment verification)
- *   - Health / info endpoints
- *   - Future frontend SDK bootstrap payload
+ * Lazy — reads from the env proxy on first call.
  */
-export const publicEnv = {
-  CONFIG_VERSION: env.CONFIG_VERSION,
-  APP_ENV:        env.APP_ENV,
-  PORT:           env.PORT,
-  APP_BASE_URL:   env.APP_BASE_URL,
-  API_BASE_URL:   env.API_BASE_URL,
-  FRONTEND_BASE_URL: env.FRONTEND_BASE_URL,
-  SERVICE_NAME:   env.SERVICE_NAME,
-  GITHUB_SHA:     env.GITHUB_SHA,
-} as const;
+export function getPublicEnv() {
+  return {
+    CONFIG_VERSION: env.CONFIG_VERSION,
+    APP_ENV:        env.APP_ENV,
+    PORT:           env.PORT,
+    APP_BASE_URL:   env.APP_BASE_URL,
+    API_BASE_URL:   env.API_BASE_URL,
+    FRONTEND_BASE_URL: env.FRONTEND_BASE_URL,
+    SERVICE_NAME:   env.SERVICE_NAME,
+    GITHUB_SHA:     env.GITHUB_SHA,
+  } as const;
+}
 
-export type PublicEnvConfig = typeof publicEnv;
+export type PublicEnvConfig = ReturnType<typeof getPublicEnv>;
 
 /**
  * Secret configuration values that must NEVER be serialised or forwarded.
- *
- * This object exists solely as an explicit, auditable catalogue of which
- * values are considered secrets.  Importing privateEnv in any module that
- * touches HTTP responses or SSE streams should be treated as a red flag in
- * code review.
- *
- * Never log, never send over the wire, never include in error messages.
+ * Lazy — reads from the env proxy on first call.
  */
-export const privateEnv = {
-  SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
-  SUPABASE_JWT_SECRET:       env.SUPABASE_JWT_SECRET,
-  METRICS_SCRAPE_TOKEN:      env.METRICS_SCRAPE_TOKEN,
-  REDIS_URL:                 env.REDIS_URL,
-} as const;
+export function getPrivateEnv() {
+  return {
+    SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
+    SUPABASE_JWT_SECRET:       env.SUPABASE_JWT_SECRET,
+    METRICS_SCRAPE_TOKEN:      env.METRICS_SCRAPE_TOKEN,
+    REDIS_URL:                 env.REDIS_URL,
+  } as const;
+}
 
-export type PrivateEnvConfig = typeof privateEnv;
+export type PrivateEnvConfig = ReturnType<typeof getPrivateEnv>;
 
 // ─── Startup config log ───────────────────────────────────────────────────────
 

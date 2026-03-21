@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import { redisConnectionOptions } from "../config/redis.js";
+import { getRedisConnectionOptions } from "../config/redis.js";
 import { env } from "../config/env.js";
 import { QueueOverloadedError } from "../utils/errors.js";
 import { queueOverloadEventsTotal } from "../plugins/prometheus.js";
@@ -23,65 +23,49 @@ export interface AnalyticsJobData {
   employeeId: string;
 }
 
-// ─── Queue Definition ─────────────────────────────────────────────────────────
+// ─── Lazy Queue Singletons ────────────────────────────────────────────────────
+//
+// Queue objects are created on first use rather than at module scope.
+// This prevents Redis connections from being opened when the module is
+// imported during tests or CI where Redis is unavailable.
 
-/**
- * Phase 21: Dedicated BullMQ queue for analytics aggregation jobs.
- *
- * Each job is triggered by a session checkout and performs a full idempotent
- * recompute of employee_daily_metrics and org_daily_metrics for the session's
- * date. Jobs use the session distance data that the distance worker writes
- * to attendance_sessions.total_distance_km.
- *
- * Retry strategy: 3 attempts with 5 s initial exponential backoff.  The first
- * attempt fires ~5 s after checkout; by then the distance worker has almost
- * certainly written its result.  On the rare case it hasn't, the second retry
- * at ~10 s will succeed.
- *
- * Deduplication: jobId = `analytics:<sessionId>` ensures that duplicate
- * enqueue calls for the same session (e.g. retry of the checkout endpoint)
- * produce only a single job in the queue.
- *
- * Rate limiter: caps throughput at 50 jobs/second to protect the database
- * from spikes during bulk checkout events or backfill runs.
- */
-const analyticsQueue = new Queue<AnalyticsJobData>("analytics", {
-  connection: redisConnectionOptions,
-  defaultJobOptions: {
-    // Phase 22: 10 s delay so the distance worker has time to write its result
-    // before the analytics worker picks up the job.  The distance worker
-    // typically finishes within 5 s; the extra margin prevents the first
-    // retry from being wasted on a still-pending distance calculation.
-    delay: 10_000,
-    attempts: 3,
-    backoff: {
-      type: "exponential",
-      delay: 5_000, // 5 s → 10 s → 20 s; gives distance worker time to finish
-    },
-    removeOnComplete: true,
-    removeOnFail: false, // Retain failed jobs for operator inspection
-  },
-});
+let _analyticsQueue: Queue<AnalyticsJobData> | undefined;
+let _analyticsFailedQueue: Queue<AnalyticsFailedJobData, void, "dead-letter"> | undefined;
 
-// ─── Dead Letter Queue ────────────────────────────────────────────────────────
-
-/**
- * Phase 22: Dedicated dead letter queue for analytics jobs that exhausted all
- * retry attempts.  Jobs here need manual operator review / replay.
- *
- * Retention: keep the last 500 failed jobs indefinitely for inspection.
- * Operators can manually re-enqueue via the /admin/queues stats endpoint or
- * directly via BullMQ tooling.
- */
-// NameType is pinned to the literal "dead-letter" so Queue.add() is type-safe
-// in BullMQ v5, which uses ExtractNameType to derive the allowed job name.
-export const analyticsFailedQueue = new Queue<AnalyticsFailedJobData, void, "dead-letter">(
-  "analytics-failed",
-  {
-    connection: redisConnectionOptions,
+function getAnalyticsQueue(): Queue<AnalyticsJobData> {
+  return _analyticsQueue ?? (_analyticsQueue = new Queue<AnalyticsJobData>("analytics", {
+    connection: getRedisConnectionOptions(),
     defaultJobOptions: {
-      removeOnComplete: { count: 500 },
+      delay: 10_000,
+      attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 5_000,
+      },
+      removeOnComplete: true,
       removeOnFail: false,
+    },
+  }));
+}
+
+function getAnalyticsFailedQueue(): Queue<AnalyticsFailedJobData, void, "dead-letter"> {
+  return _analyticsFailedQueue ?? (_analyticsFailedQueue = new Queue<AnalyticsFailedJobData, void, "dead-letter">(
+    "analytics-failed",
+    {
+      connection: getRedisConnectionOptions(),
+      defaultJobOptions: {
+        removeOnComplete: { count: 500 },
+        removeOnFail: false,
+      },
+    },
+  ));
+}
+
+export const analyticsFailedQueue = new Proxy(
+  {} as Queue<AnalyticsFailedJobData, void, "dead-letter">,
+  {
+    get(_target, prop, receiver) {
+      return Reflect.get(getAnalyticsFailedQueue(), prop, receiver);
     },
   },
 );
@@ -94,7 +78,7 @@ export async function moveToDeadLetter(
   jobData: AnalyticsJobData,
   reason: string,
 ): Promise<void> {
-  await analyticsFailedQueue.add("dead-letter", {
+  await getAnalyticsFailedQueue().add("dead-letter", {
     originalData: jobData,
     failedAt: new Date().toISOString(),
     reason,
@@ -118,19 +102,19 @@ export async function enqueueAnalyticsJob(
   organizationId: string,
   employeeId: string,
 ): Promise<void> {
+  const queue = getAnalyticsQueue();
   const [waiting, delayed] = await Promise.all([
-    analyticsQueue.getWaitingCount(),
-    analyticsQueue.getDelayedCount(),
+    queue.getWaitingCount(),
+    queue.getDelayedCount(),
   ]);
 
   const queueDepth = waiting + delayed;
   if (queueDepth >= env.MAX_QUEUE_DEPTH) {
-    // Alert hook: emit overload event counter
     queueOverloadEventsTotal.labels("analytics").inc();
     throw new QueueOverloadedError("analytics", queueDepth, env.MAX_QUEUE_DEPTH);
   }
 
-  await analyticsQueue.add(
+  await queue.add(
     "update-metrics",
     { sessionId, organizationId, employeeId },
     { jobId: `analytics:${sessionId}` },
@@ -142,7 +126,7 @@ export async function enqueueAnalyticsJob(
  * Consumed by the Prometheus metrics collector.
  */
 export async function getAnalyticsQueueDepth(): Promise<number> {
-  return analyticsQueue.getWaitingCount();
+  return getAnalyticsQueue().getWaitingCount();
 }
 
 /**
@@ -152,14 +136,19 @@ export async function getAnalyticsQueueDepth(): Promise<number> {
 export async function getAnalyticsQueueStats() {
   const [waiting, active, completed, failed, dlqWaiting, dlqFailed] =
     await Promise.all([
-      analyticsQueue.getWaitingCount(),
-      analyticsQueue.getActiveCount(),
-      analyticsQueue.getCompletedCount(),
-      analyticsQueue.getFailedCount(),
-      analyticsFailedQueue.getWaitingCount(),
-      analyticsFailedQueue.getFailedCount(),
+      getAnalyticsQueue().getWaitingCount(),
+      getAnalyticsQueue().getActiveCount(),
+      getAnalyticsQueue().getCompletedCount(),
+      getAnalyticsQueue().getFailedCount(),
+      getAnalyticsFailedQueue().getWaitingCount(),
+      getAnalyticsFailedQueue().getFailedCount(),
     ]);
   return { waiting, active, completed, failed, dlq: { waiting: dlqWaiting, failed: dlqFailed } };
 }
 
-export { analyticsQueue };
+/** Lazy queue accessor for external consumers. */
+export const analyticsQueue = new Proxy({} as Queue<AnalyticsJobData>, {
+  get(_target, prop, receiver) {
+    return Reflect.get(getAnalyticsQueue(), prop, receiver);
+  },
+});

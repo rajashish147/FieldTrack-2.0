@@ -8,24 +8,30 @@ interface HealthResponse {
     config_hash: string;
 }
 
-// Compute once at module load — the config doesn't change at runtime.
+// Compute lazily on first request — the config doesn't change at runtime.
 // Matches the hash emitted by logStartupConfig so /health and the startup
 // log can be cross-referenced without querying Loki.
-const CONFIG_HASH = createHash("sha256")
-  .update(
-    JSON.stringify({
-      configVersion: env.CONFIG_VERSION,
-      appEnv:        env.APP_ENV,
-      port:          env.PORT,
-      appBaseUrl:    env.APP_BASE_URL      ?? "",
-      apiBaseUrl:    env.API_BASE_URL      ?? "",
-      frontendUrl:   env.FRONTEND_BASE_URL ?? "",
-      serviceName:   env.SERVICE_NAME,
-      corsOrigin:    env.CORS_ORIGIN,
-    }),
-  )
-  .digest("hex")
-  .slice(0, 12);
+let _configHash: string | undefined;
+function getConfigHash(): string {
+  if (!_configHash) {
+    _configHash = createHash("sha256")
+      .update(
+        JSON.stringify({
+          configVersion: env.CONFIG_VERSION,
+          appEnv:        env.APP_ENV,
+          port:          env.PORT,
+          appBaseUrl:    env.APP_BASE_URL      ?? "",
+          apiBaseUrl:    env.API_BASE_URL      ?? "",
+          frontendUrl:   env.FRONTEND_BASE_URL ?? "",
+          serviceName:   env.SERVICE_NAME,
+          corsOrigin:    env.CORS_ORIGIN,
+        }),
+      )
+      .digest("hex")
+      .slice(0, 12);
+  }
+  return _configHash;
+}
 
 interface ReadyResponse {
     status: "ready" | "not_ready";
@@ -68,7 +74,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
         return {
             status: "ok",
             timestamp: new Date().toISOString(),
-            config_hash: CONFIG_HASH,
+            config_hash: getConfigHash(),
         };
     });
 

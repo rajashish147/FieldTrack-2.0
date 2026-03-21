@@ -201,26 +201,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     await app.register(adminRetryIntentsRoutes);
   }
 
-  // Phase 10: Start BullMQ distance worker on boot.
-  // The worker runs its own Redis-backed event loop — no blocking here.
-  // Skip in CI mode when Redis is unavailable.
-  if (!skipExternalServices) {
-    const { startDistanceWorker } = await import("./workers/distance.worker.js");
-    startDistanceWorker(app);
-  }
-
-  // Phase 21: Start analytics aggregation worker.
-  // Processes completed sessions and maintains employee_daily_metrics +
-  // org_daily_metrics so dashboard/leaderboard queries stay constant-time.
-  // Skip in CI mode when Redis is unavailable.
-  if (!skipExternalServices) {
-    const { startAnalyticsWorker } = await import("./workers/analytics.worker.js");
-    startAnalyticsWorker(app);
-  }
-
-  // NOTE: performStartupRecovery is intentionally NOT called here.
-  // It must run AFTER app.listen() resolves in server.ts so it never
-  // prevents the server from accepting traffic during the recovery scan.
+  // NOTE: Workers and startup recovery are intentionally started in server.ts
+  // after app.listen() resolves. This keeps lifecycle explicit and prevents
+  // accidental starts during app construction or module import.
 
   return app;
 }

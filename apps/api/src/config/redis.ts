@@ -8,8 +8,11 @@ import { env } from "./env.js";
  *
  * maxRetriesPerRequest: null — required by BullMQ for blocking commands
  * enableReadyCheck: false  — prevents startup delays in containerised envs
+ *
+ * Lazy: computed on first access so importing this module has no side effects.
  */
-function parseRedisUrl(redisUrl: string): {
+
+type RedisConnectionOptions = {
   host: string;
   port: number;
   password?: string;
@@ -18,7 +21,9 @@ function parseRedisUrl(redisUrl: string): {
   maxRetriesPerRequest: null;
   enableReadyCheck: false;
   tls?: Record<string, unknown>;
-} {
+};
+
+function parseRedisUrl(redisUrl: string): RedisConnectionOptions {
   // Guard: new URL() will silently mis-parse bare "host:port" strings
   // (hostname comes out empty, fallback was 127.0.0.1 — deadly in Docker).
   if (!redisUrl.startsWith("redis://") && !redisUrl.startsWith("rediss://")) {
@@ -45,5 +50,39 @@ function parseRedisUrl(redisUrl: string): {
   };
 }
 
-export const redisConnectionOptions = parseRedisUrl(env.REDIS_URL);
+let _redisOpts: RedisConnectionOptions | undefined;
+
+export function getRedisConnectionOptions(): RedisConnectionOptions {
+  if (!_redisOpts) {
+    _redisOpts = parseRedisUrl(env.REDIS_URL);
+  }
+  return _redisOpts;
+}
+
+/** @deprecated Use getRedisConnectionOptions() for lazy access */
+export const redisConnectionOptions: RedisConnectionOptions = new Proxy(
+  {} as RedisConnectionOptions,
+  {
+    get(_target, prop, receiver) {
+      return Reflect.get(getRedisConnectionOptions(), prop, receiver);
+    },
+    has(_target, prop) {
+      return prop in getRedisConnectionOptions();
+    },
+    ownKeys() {
+      return Reflect.ownKeys(getRedisConnectionOptions());
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      const opts = getRedisConnectionOptions();
+      if (prop in opts) {
+        return {
+          configurable: true,
+          enumerable: true,
+          value: (opts as Record<string | symbol, unknown>)[prop],
+        };
+      }
+      return undefined;
+    },
+  },
+);
 

@@ -33,7 +33,7 @@
 import fp from "fastify-plugin";
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import fastifyCors from "@fastify/cors";
-import { env, corsOrigins } from "../../config/env.js";
+import { env, getCorsOrigins } from "../../config/env.js";
 
 // ─── Development safe-list ────────────────────────────────────────────────────
 //
@@ -88,7 +88,7 @@ function resolveOrigins(
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
 const corsPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
-    const effectiveOrigins = resolveOrigins(env.APP_ENV, corsOrigins);
+    const effectiveOrigins = resolveOrigins(env.APP_ENV, getCorsOrigins());
 
     await fastify.register(fastifyCors, {
         origin: effectiveOrigins,
@@ -102,7 +102,7 @@ const corsPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
             originsConfigured: effectiveOrigins.length,
             origins:           effectiveOrigins,
             source:
-                corsOrigins.length > 0
+                getCorsOrigins().length > 0
                     ? "CORS_ORIGIN env var"
                     : env.APP_ENV === "development"
                         ? "DEV_CORS_ORIGINS fallback"

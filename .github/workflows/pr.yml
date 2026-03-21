@@ -55,8 +55,12 @@ jobs:
       - run: npm ci
       - run: npm run build -w packages/types
       - run: npx tsc --noEmit -p apps/api
-      - run: npx vitest run tests/unit/
-      - run: npx vitest run tests/integration/
+      - name: Unit tests
+        working-directory: apps/api
+        run: npx vitest run tests/unit/
+      - name: Integration tests
+        working-directory: apps/api
+        run: npx vitest run tests/integration/
 
   frontend-ci:
     name: Frontend CI
@@ -69,6 +73,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
+          cache: npm
 
       - run: npm ci
       - run: npm run build -w packages/types
@@ -123,13 +128,15 @@ jobs:
             -f apps/api/Dockerfile \
             .
 
+      - name: Validate CI env file exists
+        run: test -f apps/api/.env.ci || (echo "❌ Missing apps/api/.env.ci" && exit 1)
+
       - name: Start container (CI mode)
         run: |
           docker run -d \
             --name backend-blue \
             -p 127.0.0.1:3001:3000 \
-            -e NODE_ENV=production \
-            -e APP_ENV=test \
+            --env-file apps/api/.env.ci \
             -e CI_MODE=true \
             -e SKIP_EXTERNAL_SERVICES=true \
             fieldtrack-backend:pr
