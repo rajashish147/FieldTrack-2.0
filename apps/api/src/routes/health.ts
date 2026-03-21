@@ -1,31 +1,11 @@
 import type { FastifyInstance } from "fastify";
-import { createHash } from "crypto";
-import { env } from "../config/env.js";
+import { getConfigHash } from "../config/env.js";
 
 interface HealthResponse {
-    status: string;
-    timestamp: string;
-    config_hash: string;
+        status: string;
+        timestamp: string;
+        config_hash: string;
 }
-
-// Compute once at module load — the config doesn't change at runtime.
-// Matches the hash emitted by logStartupConfig so /health and the startup
-// log can be cross-referenced without querying Loki.
-const CONFIG_HASH = createHash("sha256")
-  .update(
-    JSON.stringify({
-      configVersion: env.CONFIG_VERSION,
-      appEnv:        env.APP_ENV,
-      port:          env.PORT,
-      appBaseUrl:    env.APP_BASE_URL      ?? "",
-      apiBaseUrl:    env.API_BASE_URL      ?? "",
-      frontendUrl:   env.FRONTEND_BASE_URL ?? "",
-      serviceName:   env.SERVICE_NAME,
-      corsOrigin:    env.CORS_ORIGIN,
-    }),
-  )
-  .digest("hex")
-  .slice(0, 12);
 
 interface ReadyResponse {
     status: "ready" | "not_ready";
@@ -34,8 +14,16 @@ interface ReadyResponse {
         redis: "ok" | "error";
         supabase: "ok" | "error";
         bullmq: "ok" | "error";
+        workers?: {
+            status: "ok" | "error" | "skipped";
+            active: number;
+            expected: number;
+        };
     };
 }
+
+const READY_CACHE_TTL_MS = 3000;
+let readyCache: { expiresAt: number; response: ReadyResponse } | null = null;
 
 interface RootResponse {
     service: string;
@@ -65,19 +53,27 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
         return {
             status: "ok",
             timestamp: new Date().toISOString(),
-            config_hash: CONFIG_HASH,
+            config_hash: getConfigHash(),
         };
     });
 
     app.get<{ Reply: ReadyResponse }>("/ready", {
         schema: { tags: ["health"] },
     }, async (_request, reply) => {
+        if (readyCache && readyCache.expiresAt > Date.now()) {
+            const cached = readyCache.response;
+            if (cached.status !== "ready") {
+                await reply.status(503).send(cached);
+                return;
+            }
+            return cached;
+        }
+
         // Lazy import to avoid triggering connections at module load
-        const { Redis } = await import("ioredis");
-        const { redisConnectionOptions } = await import("../config/redis.js");
         const { supabaseServiceClient } = await import("../config/supabase.js");
         const { distanceQueue } = await import("../workers/distance.queue.js");
         const { analyticsQueue } = await import("../workers/analytics.queue.js");
+        const { shouldStartWorkers, areWorkersStarted } = await import("../workers/startup.js");
 
         const checks: ReadyResponse["checks"] = {
             redis: "error",
@@ -85,50 +81,63 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
             bullmq: "error",
         };
 
-        const redis = new Redis(redisConnectionOptions);
-        try {
-            await redis.ping();
-            checks.redis = "ok";
-        } catch {
-            checks.redis = "error";
-        } finally {
-            redis.disconnect();
-        }
+        const [redisResult, supabaseResult, bullmqResult] = await Promise.allSettled([
+            (async () => {
+                const redisClient = await distanceQueue.waitUntilReady();
+                await redisClient.ping();
+            })(),
+            (async () => {
+                const { error } = await supabaseServiceClient
+                    .from("organizations")
+                    .select("id")
+                    .limit(1);
+                if (error) {
+                    throw error;
+                }
+            })(),
+            (async () => {
+                await Promise.all([
+                    distanceQueue.getWaitingCount(),
+                    analyticsQueue.getWaitingCount(),
+                ]);
+            })(),
+        ]);
 
-        try {
-            const { error } = await supabaseServiceClient
-                .from("organizations")
-                .select("id")
-                .limit(1);
-            checks.supabase = error ? "error" : "ok";
-        } catch {
-            checks.supabase = "error";
-        }
-
-        try {
-            await Promise.all([
-                distanceQueue.getWaitingCount(),
-                analyticsQueue.getWaitingCount(),
-            ]);
-            checks.bullmq = "ok";
-        } catch {
-            checks.bullmq = "error";
+        checks.redis = redisResult.status === "fulfilled" ? "ok" : "error";
+        checks.supabase = supabaseResult.status === "fulfilled" ? "ok" : "error";
+        checks.bullmq = bullmqResult.status === "fulfilled" ? "ok" : "error";
+        if (!shouldStartWorkers(process.env)) {
+            checks.workers = { status: "skipped", active: 0, expected: 2 };
+        } else {
+            const started = areWorkersStarted();
+            checks.workers = { status: started ? "ok" : "error", active: started ? 2 : 0, expected: 2 };
         }
 
         const ready = checks.redis === "ok" && checks.supabase === "ok" && checks.bullmq === "ok";
         if (!ready) {
-            await reply.status(503).send({
+            const response: ReadyResponse = {
                 status: "not_ready",
                 timestamp: new Date().toISOString(),
                 checks,
-            });
+            };
+            readyCache = {
+                expiresAt: Date.now() + READY_CACHE_TTL_MS,
+                response,
+            };
+            await reply.status(503).send(response);
             return;
         }
 
-        return {
+        const response: ReadyResponse = {
             status: "ready",
             timestamp: new Date().toISOString(),
             checks,
         };
+        readyCache = {
+            expiresAt: Date.now() + READY_CACHE_TTL_MS,
+            response,
+        };
+
+        return response;
     });
 }

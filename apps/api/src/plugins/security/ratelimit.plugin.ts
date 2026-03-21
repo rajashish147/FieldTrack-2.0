@@ -42,6 +42,7 @@ const rateLimitPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => 
 
     await fastify.register(fastifyRateLimit, {
         global: true,
+        hook: "preHandler",
         max: 1200,
         timeWindow: "1 minute",
 

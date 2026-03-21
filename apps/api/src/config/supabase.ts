@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { env } from "./env.js";
 
 /**
@@ -16,13 +16,28 @@ import { env } from "./env.js";
  * Architecture:
  *   Frontend → supabaseAnonClient (RLS enforced)
  *   Backend  → supabaseServiceClient (RLS bypassed, enforceTenant() applied)
+ *
+ * Both clients are created lazily on first access so that importing this
+ * module does not trigger env validation or network activity.
  */
-export const supabaseAnonClient = createClient(
-  env.SUPABASE_URL,
-  env.SUPABASE_ANON_KEY,
-);
 
-export const supabaseServiceClient = createClient(
-  env.SUPABASE_URL,
-  env.SUPABASE_SERVICE_ROLE_KEY,
-);
+let _anonClient: SupabaseClient | undefined;
+let _serviceClient: SupabaseClient | undefined;
+
+export const supabaseAnonClient: SupabaseClient = new Proxy({} as SupabaseClient, {
+  get(_target, prop, receiver) {
+    if (!_anonClient) {
+      _anonClient = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY);
+    }
+    return Reflect.get(_anonClient, prop, receiver);
+  },
+});
+
+export const supabaseServiceClient: SupabaseClient = new Proxy({} as SupabaseClient, {
+  get(_target, prop, receiver) {
+    if (!_serviceClient) {
+      _serviceClient = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+    }
+    return Reflect.get(_serviceClient, prop, receiver);
+  },
+});

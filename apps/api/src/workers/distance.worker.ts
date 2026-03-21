@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { trace, SpanStatusCode } from "@opentelemetry/api";
 import { redisConnectionOptions } from "../config/redis.js";
 import { enqueueDistanceJob } from "./distance.queue.js";
+import { moveDistanceToDeadLetter } from "./distance.queue.js";
 import { sessionSummaryService } from "../modules/session_summary/session_summary.service.js";
 import { metrics } from "../utils/metrics.js";
 import { distanceJobsTotal } from "../plugins/prometheus.js";
@@ -134,6 +135,28 @@ export function startDistanceWorker(app: FastifyInstance): Worker | null {
 
     const failedSessionId = job?.data.sessionId;
     if (failedSessionId) {
+      if (job?.data) {
+        moveDistanceToDeadLetter(job.data, err.message)
+          .then(() => {
+            app.log.warn(
+              {
+                jobId: job.id,
+                sessionId: failedSessionId,
+                queue: "distance-failed",
+                reason: err.message,
+                timestamp: new Date().toISOString(),
+              },
+              "Distance worker: moved failed job to dead letter queue",
+            );
+          })
+          .catch((dlqErr: unknown) => {
+            app.log.error(
+              { jobId: job.id, sessionId: failedSessionId, dlqErr },
+              "Distance worker: failed to move job to dead letter queue",
+            );
+          });
+      }
+
       void (async () => {
         const { error } = await supabase
           .from("attendance_sessions")

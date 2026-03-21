@@ -13,6 +13,7 @@ import type { EnrichedAttendanceSession } from "./attendance.repository.js";
 import { profileRepository } from "../profile/profile.repository.js";
 import { sseEventBus } from "../../utils/sse-emitter.js";
 import { emitEvent } from "../../utils/event-bus.js";
+import { persistRetryIntent } from "../../workers/retry-intents.js";
 
 /**
  * Attendance service — business logic for check-in/check-out.
@@ -100,29 +101,81 @@ export const attendanceService = {
       },
     });
 
-    enqueueDistanceJob(closedSession.id).catch((err: unknown) => {
+    try {
+      await enqueueDistanceJob(closedSession.id);
+    } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      request.log.warn(
-        { sessionId: closedSession.id, error: message },
-        "Failed to enqueue distance job — session summary may be delayed",
+      const errorCode =
+        typeof err === "object" && err !== null && "code" in err
+          ? String((err as { code?: unknown }).code)
+          : undefined;
+      const errorDetails =
+        typeof err === "object" && err !== null && "details" in err
+          ? (err as { details?: Record<string, unknown> }).details
+          : undefined;
+      request.log.error(
+        {
+          queue: "distance-engine",
+          sessionId: closedSession.id,
+          organizationId: request.organizationId,
+          employeeId,
+          error: message,
+          errorCode,
+          errorDetails,
+          timestamp: new Date().toISOString(),
+        },
+        "Distance enqueue failed; persisting retry intent",
       );
-    });
+      await persistRetryIntent(
+        "distance-engine",
+        closedSession.id,
+        { sessionId: closedSession.id, organizationId: request.organizationId, employeeId },
+        message,
+        request.log,
+      );
+    }
 
     // Phase 21: Enqueue analytics aggregation job for this session.
     // The job runs after checkout and recomputes daily metrics once the
     // distance worker has written total_distance_km (exponential backoff
     // of 5 s gives the distance worker plenty of time to finish first).
-    enqueueAnalyticsJob(
-      closedSession.id,
-      request.organizationId,
-      employeeId,
-    ).catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      request.log.warn(
-        { sessionId: closedSession.id, error: message },
-        "Failed to enqueue analytics job — daily metrics may be delayed",
+    try {
+      await enqueueAnalyticsJob(
+        closedSession.id,
+        request.organizationId,
+        employeeId,
       );
-    });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const errorCode =
+        typeof err === "object" && err !== null && "code" in err
+          ? String((err as { code?: unknown }).code)
+          : undefined;
+      const errorDetails =
+        typeof err === "object" && err !== null && "details" in err
+          ? (err as { details?: Record<string, unknown> }).details
+          : undefined;
+      request.log.error(
+        {
+          queue: "analytics",
+          sessionId: closedSession.id,
+          organizationId: request.organizationId,
+          employeeId,
+          error: message,
+          errorCode,
+          errorDetails,
+          timestamp: new Date().toISOString(),
+        },
+        "Analytics enqueue failed; persisting retry intent",
+      );
+      await persistRetryIntent(
+        "analytics",
+        `analytics:${closedSession.id}`,
+        { sessionId: closedSession.id, organizationId: request.organizationId, employeeId },
+        message,
+        request.log,
+      );
+    }
 
     return closedSession;
   },

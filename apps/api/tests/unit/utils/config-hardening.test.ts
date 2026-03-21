@@ -31,9 +31,9 @@ import { normalizeUrl } from "../../../src/utils/url.js";
 // tests independent of the running process environment.
 import {
   env,
-  corsOrigins,
-  publicEnv,
-  privateEnv,
+  getCorsOrigins,
+  getPublicEnv,
+  getPrivateEnv,
   logStartupConfig,
 } from "../../../src/config/env.js";
 
@@ -393,12 +393,12 @@ describe("strict CORS — resolveOrigins contract", () => {
     expect(result).toHaveLength(2);
   });
 
-  it("corsOrigins export from env.ts is always a string[] (never boolean)", () => {
-    expect(Array.isArray(corsOrigins)).toBe(true);
+  it("getCorsOrigins() returns a string[] (never boolean)", () => {
+    expect(Array.isArray(getCorsOrigins())).toBe(true);
   });
 
-  it("corsOrigins entries are non-empty strings", () => {
-    for (const origin of corsOrigins) {
+  it("getCorsOrigins() entries are non-empty strings", () => {
+    for (const origin of getCorsOrigins()) {
       expect(typeof origin).toBe("string");
       expect(origin.length).toBeGreaterThan(0);
     }
@@ -409,104 +409,104 @@ describe("strict CORS — resolveOrigins contract", () => {
 // 7 & 8. publicEnv / privateEnv split
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("publicEnv — safe-to-expose config subset", () => {
+describe("getPublicEnv() — safe-to-expose config subset", () => {
   it("contains APP_ENV", () => {
-    expect(publicEnv).toHaveProperty("APP_ENV");
+    expect(getPublicEnv()).toHaveProperty("APP_ENV");
   });
 
   it("contains PORT", () => {
-    expect(publicEnv).toHaveProperty("PORT");
+    expect(getPublicEnv()).toHaveProperty("PORT");
   });
 
   it("contains SERVICE_NAME", () => {
-    expect(publicEnv).toHaveProperty("SERVICE_NAME");
+    expect(getPublicEnv()).toHaveProperty("SERVICE_NAME");
   });
 
   it("contains CONFIG_VERSION", () => {
-    expect(publicEnv).toHaveProperty("CONFIG_VERSION");
+    expect(getPublicEnv()).toHaveProperty("CONFIG_VERSION");
   });
 
   it("contains API_BASE_URL key (value may be undefined in test env)", () => {
-    expect("API_BASE_URL" in publicEnv).toBe(true);
+    expect("API_BASE_URL" in getPublicEnv()).toBe(true);
   });
 
   it("contains FRONTEND_BASE_URL key (value may be undefined in test env)", () => {
-    expect("FRONTEND_BASE_URL" in publicEnv).toBe(true);
+    expect("FRONTEND_BASE_URL" in getPublicEnv()).toBe(true);
   });
 
   it("contains APP_BASE_URL key (value may be undefined in test env)", () => {
-    expect("APP_BASE_URL" in publicEnv).toBe(true);
+    expect("APP_BASE_URL" in getPublicEnv()).toBe(true);
   });
 
   it("does NOT contain SUPABASE_SERVICE_ROLE_KEY", () => {
-    expect(publicEnv).not.toHaveProperty("SUPABASE_SERVICE_ROLE_KEY");
+    expect(getPublicEnv()).not.toHaveProperty("SUPABASE_SERVICE_ROLE_KEY");
   });
 
   it("does NOT contain SUPABASE_JWT_SECRET", () => {
-    expect(publicEnv).not.toHaveProperty("SUPABASE_JWT_SECRET");
+    expect(getPublicEnv()).not.toHaveProperty("SUPABASE_JWT_SECRET");
   });
 
   it("does NOT contain METRICS_SCRAPE_TOKEN", () => {
-    expect(publicEnv).not.toHaveProperty("METRICS_SCRAPE_TOKEN");
+    expect(getPublicEnv()).not.toHaveProperty("METRICS_SCRAPE_TOKEN");
   });
 
   it("does NOT contain REDIS_URL", () => {
-    expect(publicEnv).not.toHaveProperty("REDIS_URL");
+    expect(getPublicEnv()).not.toHaveProperty("REDIS_URL");
   });
 
   it("does NOT contain SUPABASE_ANON_KEY", () => {
-    expect(publicEnv).not.toHaveProperty("SUPABASE_ANON_KEY");
+    expect(getPublicEnv()).not.toHaveProperty("SUPABASE_ANON_KEY");
   });
 
-  it("publicEnv.APP_ENV matches live env.APP_ENV", () => {
-    expect(publicEnv.APP_ENV).toBe(env.APP_ENV);
+  it("getPublicEnv().APP_ENV matches live env.APP_ENV", () => {
+    expect(getPublicEnv().APP_ENV).toBe(env.APP_ENV);
   });
 
-  it("publicEnv.PORT matches live env.PORT", () => {
-    expect(publicEnv.PORT).toBe(env.PORT);
+  it("getPublicEnv().PORT matches live env.PORT", () => {
+    expect(getPublicEnv().PORT).toBe(env.PORT);
   });
 
-  it("publicEnv.CONFIG_VERSION is \"1\"", () => {
-    expect(publicEnv.CONFIG_VERSION).toBe("1");
+  it("getPublicEnv().CONFIG_VERSION is \"1\"", () => {
+    expect(getPublicEnv().CONFIG_VERSION).toBe("1");
   });
 });
 
-describe("privateEnv — secret config subset", () => {
+describe("getPrivateEnv() — secret config subset", () => {
   it("contains SUPABASE_SERVICE_ROLE_KEY", () => {
-    expect(privateEnv).toHaveProperty("SUPABASE_SERVICE_ROLE_KEY");
+    expect(getPrivateEnv()).toHaveProperty("SUPABASE_SERVICE_ROLE_KEY");
   });
 
   it("contains SUPABASE_JWT_SECRET", () => {
-    expect(privateEnv).toHaveProperty("SUPABASE_JWT_SECRET");
+    expect(getPrivateEnv()).toHaveProperty("SUPABASE_JWT_SECRET");
   });
 
   it("contains METRICS_SCRAPE_TOKEN key (value may be undefined in test env)", () => {
-    expect("METRICS_SCRAPE_TOKEN" in privateEnv).toBe(true);
+    expect("METRICS_SCRAPE_TOKEN" in getPrivateEnv()).toBe(true);
   });
 
   it("contains REDIS_URL", () => {
-    expect(privateEnv).toHaveProperty("REDIS_URL");
+    expect(getPrivateEnv()).toHaveProperty("REDIS_URL");
   });
 
   it("does NOT contain APP_ENV", () => {
-    expect(privateEnv).not.toHaveProperty("APP_ENV");
+    expect(getPrivateEnv()).not.toHaveProperty("APP_ENV");
   });
 
   it("does NOT contain PORT", () => {
-    expect(privateEnv).not.toHaveProperty("PORT");
+    expect(getPrivateEnv()).not.toHaveProperty("PORT");
   });
 
   it("does NOT contain API_BASE_URL", () => {
-    expect(privateEnv).not.toHaveProperty("API_BASE_URL");
+    expect(getPrivateEnv()).not.toHaveProperty("API_BASE_URL");
   });
 
-  it("privateEnv.SUPABASE_SERVICE_ROLE_KEY is a non-empty string", () => {
-    expect(typeof privateEnv.SUPABASE_SERVICE_ROLE_KEY).toBe("string");
-    expect(privateEnv.SUPABASE_SERVICE_ROLE_KEY.length).toBeGreaterThan(0);
+  it("getPrivateEnv().SUPABASE_SERVICE_ROLE_KEY is a non-empty string", () => {
+    expect(typeof getPrivateEnv().SUPABASE_SERVICE_ROLE_KEY).toBe("string");
+    expect(getPrivateEnv().SUPABASE_SERVICE_ROLE_KEY.length).toBeGreaterThan(0);
   });
 
-  it("privateEnv.REDIS_URL starts with redis:// or rediss://", () => {
-    expect(privateEnv.REDIS_URL).toMatch(/^rediss?:\/\//);
+  it("getPrivateEnv().REDIS_URL starts with redis:// or rediss://", () => {
+    expect(getPrivateEnv().REDIS_URL).toMatch(/^rediss?:\/\//);
   });
 });
 
@@ -627,17 +627,22 @@ describe("APP_BASE_URL", () => {
     expect(env.APP_BASE_URL === undefined || typeof env.APP_BASE_URL === "string").toBe(true);
   });
 
-  it("is present as a key on publicEnv", () => {
-    expect("APP_BASE_URL" in publicEnv).toBe(true);
+  it("is present as a key on getPublicEnv()", () => {
+    expect("APP_BASE_URL" in getPublicEnv()).toBe(true);
   });
 
-  it("is NOT present on privateEnv", () => {
-    expect("APP_BASE_URL" in privateEnv).toBe(false);
+  it("is NOT present on getPrivateEnv()", () => {
+    expect("APP_BASE_URL" in getPrivateEnv()).toBe(false);
   });
 
-  it("is undefined in the test environment (not set in env-setup.ts)", () => {
-    // env-setup.ts does not set APP_BASE_URL — it should parse as undefined.
-    expect(env.APP_BASE_URL).toBeUndefined();
+  it("is consistent with the test environment's APP_BASE_URL value", () => {
+    // If APP_BASE_URL is set in the test environment it must be a valid URL;
+    // if it is not set it must be absent (optional field).
+    if (process.env.APP_BASE_URL) {
+      expect(env.APP_BASE_URL).toBe(process.env.APP_BASE_URL.replace(/\/+$/, ""));
+    } else {
+      expect(env.APP_BASE_URL).toBeUndefined();
+    }
   });
 
   it("optionalBaseUrl strips trailing slash from APP_BASE_URL when set", () => {

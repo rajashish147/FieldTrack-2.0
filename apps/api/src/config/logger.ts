@@ -1,8 +1,10 @@
 import type { FastifyLoggerOptions } from "fastify";
 import type { PinoLoggerOptions } from "fastify/types/logger.js";
 import { trace, context, isSpanContextValid } from "@opentelemetry/api";
+import { createRequire } from "module";
 
 type LoggerConfig = FastifyLoggerOptions & PinoLoggerOptions;
+const require = createRequire(import.meta.url);
 
 // Injects the active OpenTelemetry trace_id and span_id into every Pino log
 // line. Grafana can then link logs ↔ traces using these fields:
@@ -42,6 +44,20 @@ const productionLogger: LoggerConfig = {
     mixin: otelMixin,
 };
 
+const structuredDebugLogger: LoggerConfig = {
+    level: "debug",
+    mixin: otelMixin,
+};
+
+function canUsePrettyTransport(): boolean {
+    try {
+        require.resolve("pino-pretty");
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 /**
  * Returns the appropriate Pino logger configuration for the given app environment.
  *
@@ -52,5 +68,16 @@ const productionLogger: LoggerConfig = {
  * everything else → pino-pretty with colours (human-readable in dev/staging/test)
  */
 export function getLoggerConfig(appEnv: string): LoggerConfig {
-    return appEnv === "production" ? productionLogger : developmentLogger;
+    if (appEnv === "production") {
+        return productionLogger;
+    }
+
+    // In minimal production-like containers (CI parity, distroless runtime),
+    // devDependencies are omitted so pino-pretty is unavailable.
+    // Fall back to structured JSON instead of crashing at startup.
+    if (!canUsePrettyTransport()) {
+        return structuredDebugLogger;
+    }
+
+    return developmentLogger;
 }

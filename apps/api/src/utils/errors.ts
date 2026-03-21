@@ -1,10 +1,19 @@
 export class AppError extends Error {
     public readonly statusCode: number;
+    public readonly code?: string;
+    public readonly details?: Record<string, unknown>;
 
-    constructor(message: string, statusCode: number) {
+    constructor(
+        message: string,
+        statusCode: number,
+        code?: string,
+        details?: Record<string, unknown>,
+    ) {
         super(message);
         this.name = "AppError";
         this.statusCode = statusCode;
+        this.code = code;
+        this.details = details;
         Object.setPrototypeOf(this, new.target.prototype);
     }
 }
@@ -34,6 +43,22 @@ export class ForbiddenError extends AppError {
     constructor(message = "Forbidden") {
         super(message, 403);
         this.name = "ForbiddenError";
+    }
+}
+
+export class QueueOverloadedError extends AppError {
+    constructor(queueName: string, queueDepth: number, maxQueueDepth: number) {
+        super(
+            `Queue overload: ${queueName} depth ${queueDepth} exceeds MAX_QUEUE_DEPTH=${maxQueueDepth}`,
+            503,
+            "QUEUE_OVERLOADED",
+            {
+                queue: queueName,
+                queueDepth,
+                maxQueueDepth,
+            },
+        );
+        this.name = "QueueOverloadedError";
     }
 }
 

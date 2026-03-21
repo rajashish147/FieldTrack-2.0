@@ -132,6 +132,73 @@ export const analyticsJobRetriesTotal = new client.Counter({
   registers: [register],
 });
 
+// ─── Queue Depth Metrics ──────────────────────────────────────────────────────
+
+/**
+ * Current queue depth (waiting jobs) per queue.
+ * Sampled at each Prometheus scrape via the queue module.
+ */
+export const queueDepthGauge = new client.Gauge({
+  name: "queue_depth",
+  help: "Number of jobs currently waiting in the queue",
+  labelNames: ["queue"],
+  registers: [register],
+});
+
+/**
+ * Queue overload rejection events (jobs rejected due to MAX_QUEUE_DEPTH exceeded).
+ * Used for alerting on persistent queue saturation.
+ */
+export const queueOverloadEventsTotal = new client.Counter({
+  name: "queue_overload_events_total",
+  help: "Total number of job enqueue requests rejected due to queue depth limits",
+  labelNames: ["queue"],
+  registers: [register],
+});
+
+/**
+ * Current size of the dead letter queue (failed jobs pending manual review).
+ * Per-queue label so DLQ growth can be monitored per queue.
+ */
+export const dlqSizeGauge = new client.Gauge({
+  name: "dlq_size",
+  help: "Number of jobs currently in the dead letter queue",
+  labelNames: ["queue"],
+  registers: [register],
+});
+
+// ─── Retry Intent Metrics ────────────────────────────────────────────────────
+
+/**
+ * Current count of pending retry intents (intents awaiting replay).
+ * High values indicate Redis/Supabase transient failures.
+ */
+export const retryIntentsPendingGauge = new client.Gauge({
+  name: "retry_intents_pending",
+  help: "Number of pending queue retry intents awaiting replay",
+  registers: [register],
+});
+
+/**
+ * Current count of dead retry intents (exhausted all attempts).
+ * High values may indicate a systemic problem requiring operator intervention.
+ */
+export const retryIntentsDeadGauge = new client.Gauge({
+  name: "retry_intents_dead",
+  help: "Number of dead queue retry intents (exhausted all retry attempts)",
+  registers: [register],
+});
+
+/**
+ * Retry intent spike detection: count of intents created in the current period.
+ * Useful for alerting on sudden enqueue failure bursts.
+ */
+export const retryIntentCreatedTotal = new client.Counter({
+  name: "retry_intents_created_total",
+  help: "Total number of retry intents created (enqueue failures persisted)",
+  registers: [register],
+});
+
 // ─── Distance Worker Metrics ───────────────────────────────────────────────────
 
 /**
@@ -251,6 +318,43 @@ const prometheusPlugin: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.get("/metrics", async (request, reply) => {
+    // Populate queue metrics at scrape time
+    try {
+      const { distanceQueue, distanceFailedQueue } = await import("../workers/distance.queue.js");
+      const { analyticsQueue, analyticsFailedQueue } = await import("../workers/analytics.queue.js");
+      const { supabaseServiceClient } = await import("../config/supabase.js");
+
+      // Get queue depths
+      const [distanceDepth, analyticsDepth, distanceDLQDepth, analyticsDLQDepth] = await Promise.all([
+        distanceQueue.getWaitingCount(),
+        analyticsQueue.getWaitingCount(),
+        distanceFailedQueue.count(),
+        analyticsFailedQueue.count(),
+      ]);
+
+      queueDepthGauge.labels("distance-engine").set(distanceDepth);
+      queueDepthGauge.labels("analytics").set(analyticsDepth);
+      dlqSizeGauge.labels("distance-engine").set(distanceDLQDepth);
+      dlqSizeGauge.labels("analytics").set(analyticsDLQDepth);
+
+      // Get retry intent counts
+      const { data: pendingData } = await supabaseServiceClient
+        .from("queue_retry_intents")
+        .select("id", { count: "exact" })
+        .eq("status", "pending");
+
+      const { data: deadData } = await supabaseServiceClient
+        .from("queue_retry_intents")
+        .select("id", { count: "exact" })
+        .eq("status", "dead");
+
+      retryIntentsPendingGauge.set(pendingData?.length ?? 0);
+      retryIntentsDeadGauge.set(deadData?.length ?? 0);
+    } catch (error) {
+      // Silently fail metric population — do not block scrape
+      // Metrics will retain their last known values
+    }
+
     // Require a shared secret token when one is configured.
     // In development (token undefined) the endpoint remains open.
     if (env.METRICS_SCRAPE_TOKEN !== undefined) {

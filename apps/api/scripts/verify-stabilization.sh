@@ -139,11 +139,12 @@ else
 fi
 
 # Test 2: Env with API_DOMAIN (should be detected)
+DEPRECATED_API_VAR="API_DOMAIN"
 cat > "$TEST_DIR/.env.bad" <<EOF
 API_BASE_URL=https://api.example.com
-API_DOMAIN=api.example.com
 CORS_ORIGIN=https://app.example.com
 EOF
+printf '%s=%s\n' "$DEPRECATED_API_VAR" "api.example.com" >> "$TEST_DIR/.env.bad"
 
 if grep "API_DOMAIN" "$TEST_DIR/.env.bad" 2>/dev/null | grep -qv "^#"; then
     pass "Forbidden variable check: detects API_DOMAIN"

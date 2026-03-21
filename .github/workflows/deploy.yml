@@ -511,11 +511,11 @@ jobs:
   # ---------------------------------------------------------------------------
   # JOB: sync-infra
   #
-  # Syncs Nginx config (with slot-aware port substitution) and restarts the
-  # monitoring stack only when its config files have changed (hash-gated).
+  # Syncs Nginx config (with slot-aware port substitution).
+  # Monitoring restarts are handled exclusively by deploy-bluegreen.sh.
   # ---------------------------------------------------------------------------
   sync-infra:
-    name: Sync Infrastructure (nginx + monitoring)
+    name: Sync Infrastructure (nginx)
     runs-on: ubuntu-latest
     needs: [deploy]
     timeout-minutes: 10
@@ -533,7 +533,6 @@ jobs:
             INFRA_DIR="$DEPLOY_ROOT/infra"
             NGINX_LIVE="/etc/nginx/sites-enabled/fieldtrack.conf"
             ACTIVE_SLOT_FILE="$HOME/.fieldtrack-active-slot"
-            INFRA_HASH_FILE="$HOME/.fieldtrack-infra-hash"
 
             ACTIVE_SLOT=$(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo "blue")
             if [ "$ACTIVE_SLOT" = "green" ]; then BACKEND_PORT=3002; else BACKEND_PORT=3001; fi
@@ -542,15 +541,7 @@ jobs:
             # app variables. DEPLOY_ROOT is already exported above; load-env.sh uses it.
             source "$DEPLOY_ROOT/apps/api/scripts/load-env.sh"
 
-            FRONTEND_DOMAIN=$(grep -E '^FRONTEND_DOMAIN=' "$INFRA_DIR/.env.monitoring" 2>/dev/null | tail -1 | cut -d= -f2-)
-
-            if [ -z "${FRONTEND_DOMAIN:-}" ]; then
-              echo "::error::FRONTEND_DOMAIN not found in infra/.env.monitoring"
-              exit 1
-            fi
-
             echo "✓ API_HOSTNAME:    $API_HOSTNAME"
-            echo "✓ FRONTEND_DOMAIN: $FRONTEND_DOMAIN"
 
             echo "=== Syncing Nginx (slot: $ACTIVE_SLOT, port: $BACKEND_PORT) ==="
             sudo cp "$NGINX_LIVE" /tmp/fieldtrack.conf.bak 2>/dev/null || true
@@ -558,7 +549,6 @@ jobs:
             sed \
               -e "s|__BACKEND_PORT__|$BACKEND_PORT|g" \
               -e "s|__API_HOSTNAME__|$API_HOSTNAME|g" \
-              -e "s|__FRONTEND_DOMAIN__|$FRONTEND_DOMAIN|g" \
               "$INFRA_DIR/nginx/fieldtrack.conf" > "$NGINX_TMP"
             sudo cp "$NGINX_TMP" "$NGINX_LIVE"
             rm -f "$NGINX_TMP"
@@ -570,24 +560,6 @@ jobs:
             fi
             sudo systemctl reload nginx
             echo "✓ Nginx reloaded."
-
-            echo "=== Checking monitoring stack config hash ==="
-            CURRENT_HASH=$(find "$INFRA_DIR" -readable \
-              \( -name "*.yml" -o -name "*.yaml" -o -name "*.conf" -o -name "*.toml" -o -name "*.json" \) \
-              -not -path "$INFRA_DIR/nginx/*" \
-              | sort | xargs -r sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "changed")
-            STORED_HASH=$(cat "$INFRA_HASH_FILE" 2>/dev/null || echo "")
-
-            if [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
-              echo "Monitoring configs changed — restarting stack..."
-              cd "$INFRA_DIR"
-              docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml pull --quiet
-              docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml up -d
-              echo "$CURRENT_HASH" > "$INFRA_HASH_FILE"
-              echo "✓ Monitoring stack updated."
-            else
-              echo "Monitoring configs unchanged — skipping restart."
-            fi
 
             echo "✓ Infra sync completed in $(($(date +%s) - T0))s"
 

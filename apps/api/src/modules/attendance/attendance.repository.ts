@@ -451,55 +451,45 @@ export const attendanceRepository = {
   async findSessionsNeedingRecalculation(
     log: FastifyBaseLogger,
   ): Promise<{ id: string }[]> {
-    // Hard cap on sessions scanned per recovery run.
-    const RECOVERY_SCAN_LIMIT = 500;
-
-    const { data, error } = await supabase
-      .from("attendance_sessions")
-      .select(
-        `
-                id,
-                checkout_at,
-                session_summaries (
-                    computed_at
-                )
-            `,
-      )
-      .not("checkout_at", "is", null)
-      .order("checkout_at", { ascending: true })
-      .limit(RECOVERY_SCAN_LIMIT);
-
-    if (error) {
-      log.error({ error: error.message }, "Recovery scan query failed");
-      return [];
-    }
-
-    if (!data) return [];
-
+    const PAGE_SIZE = 500;
+    const MAX_SCAN = 5000;
+    let offset = 0;
+    let scanned = 0;
     const requiresRecalculation: { id: string }[] = [];
 
-    for (const row of data) {
-      const summaries = Array.isArray(row.session_summaries)
-        ? row.session_summaries
-        : row.session_summaries
-          ? [row.session_summaries]
-          : [];
+    while (scanned < MAX_SCAN) {
+      const { data, error } = await supabase
+        .from("attendance_sessions")
+        .select("id, created_at, distance_recalculation_status")
+        .not("checkout_at", "is", null)
+        .in("distance_recalculation_status", ["pending", "failed"])
+        .order("created_at", { ascending: false })
+        .range(offset, offset + PAGE_SIZE - 1);
 
-      const summary = summaries[0] as { computed_at: string } | undefined;
-      const checkoutAt = row.checkout_at as string;
+      if (error) {
+        log.error({ error: error.message, offset }, "Recovery scan query failed");
+        break;
+      }
 
-      if (!summary) {
-        requiresRecalculation.push({ id: row.id });
-      } else if (
-        new Date(summary.computed_at).getTime() < new Date(checkoutAt).getTime()
-      ) {
-        requiresRecalculation.push({ id: row.id });
+      const rows = data ?? [];
+      if (rows.length === 0) {
+        break;
+      }
+
+      for (const row of rows) {
+        requiresRecalculation.push({ id: row.id as string });
+      }
+
+      scanned += rows.length;
+      offset += rows.length;
+      if (rows.length < PAGE_SIZE) {
+        break;
       }
     }
 
     log.info(
       {
-        scanned: data.length,
+        scanned,
         needsRecalculation: requiresRecalculation.length,
       },
       "Recovery scan complete",

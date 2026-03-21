@@ -9,6 +9,8 @@ export type ErrorResponse = {
   success: false;
   error: string;
   requestId: string;
+  code?: string;
+  details?: Record<string, unknown>;
 };
 export type ApiResponse<T> = SuccessResponse<T> | ErrorResponse;
 
@@ -41,8 +43,13 @@ export function ok<T>(data: T): SuccessResponse<T> {
   return { success: true, data };
 }
 
-export function fail(error: string, requestId: string): ErrorResponse {
-  return { success: false, error, requestId };
+export function fail(
+  error: string,
+  requestId: string,
+  code?: string,
+  details?: Record<string, unknown>,
+): ErrorResponse {
+  return { success: false, error, requestId, code, details };
 }
 
 // ─── Unified error handler ────────────────────────────────────────────────────
@@ -64,7 +71,9 @@ export function handleError(
   context: string,
 ): never {
   if (error instanceof AppError) {
-    void reply.status(error.statusCode).send(fail(error.message, request.id));
+    void reply
+      .status(error.statusCode)
+      .send(fail(error.message, request.id, error.code, error.details));
     throw error;
   }
 
