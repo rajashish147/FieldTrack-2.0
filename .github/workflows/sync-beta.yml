@@ -1,0 +1,30 @@
+name: Sync beta ← master
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-beta
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync beta branch
+        run: |
+          git fetch origin
+          git checkout beta
+          git reset --hard origin/master
+          git push origin beta --force-with-lease
+
+          echo "beta synced with master"
+          git log -1 --oneline

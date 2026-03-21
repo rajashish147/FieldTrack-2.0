@@ -1,0 +1,67 @@
+name: Auto Merge PR
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  check_suite:
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-merge
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate PR scope
+        if: >
+          github.event.pull_request.base.ref != 'master' ||
+          github.event.pull_request.head.ref != 'beta'
+        run: exit 0
+
+      - name: Skip draft PR
+        if: github.event.pull_request.draft == true
+        run: exit 0
+
+      - name: Wait for checks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR=${{ github.event.pull_request.number }}
+
+          for i in {1..10}; do
+            FAILING=$(gh pr view "$PR" --json statusCheckRollup -q '
+              [.statusCheckRollup[] | select(.conclusion != "SUCCESS")] | length
+            ')
+
+            if [ "$FAILING" = "0" ]; then
+              echo "All checks passed"
+              break
+            fi
+
+            echo "Waiting for checks..."
+            sleep 30
+          done
+
+      - name: Merge PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR=${{ github.event.pull_request.number }}
+          SHA=${{ github.event.pull_request.head.sha }}
+
+          gh pr merge "$PR" \
+            --squash \
+            --match-head-commit "$SHA" \
+            --delete-branch=false
