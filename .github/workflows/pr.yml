@@ -1,6 +1,9 @@
 name: PR Validation
 
 on:
+  push:
+    branches:
+      - beta
   pull_request:
     branches:
       - master

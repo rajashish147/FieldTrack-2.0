@@ -78,8 +78,7 @@ jobs:
             --base master \
             --head beta \
             --title "🚀 Release: beta → master" \
-            --body-file body.txt \
-            --draft
+            --body-file body.txt
 
       - name: Update PR summary
         if: steps.check.outputs.pr != ''
