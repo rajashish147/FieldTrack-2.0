@@ -28,7 +28,9 @@ jobs:
         run: |
           COMMITS=$(git log origin/master..origin/beta \
             --no-merges \
-            --pretty=format:"%s" \
+            --pretty=format:"%h %s" \
+            | awk '!seen[$1]++' \
+            | cut -d' ' -f2- \
             | awk '!seen[$0]++' \
             | sed 's/^/- /' \
             | head -20)
