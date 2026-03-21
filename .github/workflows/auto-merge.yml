@@ -61,6 +61,22 @@ jobs:
             sleep 10
           done
 
+      - name: Mark PR ready for review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR=${{ github.event.pull_request.number }}
+
+          IS_DRAFT=$(gh pr view "$PR" --json isDraft -q .isDraft)
+
+          if [ "$IS_DRAFT" = "true" ]; then
+            echo "Marking PR as ready for review"
+            gh pr ready "$PR"
+            sleep 5
+          else
+            echo "PR already ready"
+          fi
+
       - name: Merge PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

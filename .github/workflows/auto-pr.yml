@@ -23,28 +23,7 @@ jobs:
       - name: Fetch branches
         run: git fetch origin master beta
 
-      - name: Generate commit summary
-        id: summary
-        run: |
-          COMMITS=$(git log origin/master..origin/beta \
-            --no-merges \
-            --pretty=format:"%h %s" \
-            | awk '!seen[$1]++' \
-            | cut -d' ' -f2- \
-            | awk '!seen[$0]++' \
-            | sed 's/^/- /' \
-            | head -20)
-
-          if [ -z "$COMMITS" ]; then
-            echo "empty=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          echo "empty=false" >> $GITHUB_OUTPUT
-          printf "%s\n" "$COMMITS" > commits.txt
-
       - name: Check existing PR
-        if: steps.summary.outputs.empty != 'true'
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -58,8 +37,42 @@ jobs:
 
           echo "pr=$PR" >> $GITHUB_OUTPUT
 
+      - name: Generate commit summary
+        id: summary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR=${{ steps.check.outputs.pr }}
+
+          # If PR exists, get commits from PR
+          if [ -n "$PR" ]; then
+            COMMITS=$(gh pr view "$PR" --json commits -q '
+              [.commits[].messageHeadline]
+              | unique
+              | .[]
+            ' | sed 's/^/- /')
+          else
+            # If no PR yet, use git log
+            COMMITS=$(git log origin/master..origin/beta \
+              --no-merges \
+              --pretty=format:"%h %s" \
+              | awk '!seen[$1]++' \
+              | cut -d' ' -f2- \
+              | awk '!seen[$0]++' \
+              | sed 's/^/- /' \
+              | head -20)
+          fi
+
+          if [ -z "$COMMITS" ]; then
+            echo "empty=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "empty=false" >> $GITHUB_OUTPUT
+          printf "%s\n" "$COMMITS" > commits.txt
+
       - name: Create PR if not exists
-        if: steps.check.outputs.pr == ''
+        if: steps.check.outputs.pr == '' && steps.summary.outputs.empty != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -88,7 +101,7 @@ jobs:
             --body-file body.txt
 
       - name: Update PR summary
-        if: steps.check.outputs.pr != ''
+        if: steps.check.outputs.pr != '' && steps.summary.outputs.empty != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
