@@ -160,34 +160,38 @@ else
     HEALTH_ENDPOINT="/ready"
 fi
 
-until curl --max-time 2 -fs "http://127.0.0.1:$INACTIVE_PORT$HEALTH_ENDPOINT" >/dev/null 2>&1; do
+until true; do
     ATTEMPT=$((ATTEMPT+1))
 
-    # Check if container crashed during health check
+    STATUS=$(curl --max-time 2 -s -o /dev/null -w "%{http_code}" \
+        "http://127.0.0.1:$INACTIVE_PORT$HEALTH_ENDPOINT" || echo "000")
+
+    # Success condition
+    if [ "$STATUS" = "200" ]; then
+        echo "Readiness check passed."
+        break
+    fi
+
+    # Check if container crashed
     if ! docker ps --format '{{.Names}}' | grep -q "^${INACTIVE_NAME}$"; then
-        echo "ERROR: Container $INACTIVE_NAME stopped unexpectedly during readiness check."
-        echo "===== Container logs ($INACTIVE_NAME) ====="
+        echo "ERROR: Container $INACTIVE_NAME stopped unexpectedly."
         docker logs "$INACTIVE_NAME" --tail 100 || true
-        echo "==========================================="
-        echo "Rolling back — removing failed container..."
         docker rm -f "$INACTIVE_NAME" || true
         exit 1
     fi
 
+    # Timeout condition
     if [ "$ATTEMPT" -ge "$MAX_HEALTH_ATTEMPTS" ]; then
         echo "Readiness check failed after $MAX_HEALTH_ATTEMPTS attempts."
+        echo "Last HTTP status: $STATUS"
         echo "Endpoint: http://127.0.0.1:$INACTIVE_PORT$HEALTH_ENDPOINT"
 
-        echo "===== Container logs ($INACTIVE_NAME) ====="
         docker logs "$INACTIVE_NAME" --tail 100 || true
-        echo "==========================================="
-
-        echo "Rolling back — removing failed container..."
         docker rm -f "$INACTIVE_NAME" || true
         exit 1
     fi
 
-    echo "  Attempt $ATTEMPT/$MAX_HEALTH_ATTEMPTS — waiting ${HEALTH_INTERVAL}s..."
+    echo "  Attempt $ATTEMPT/$MAX_HEALTH_ATTEMPTS — status $STATUS — waiting ${HEALTH_INTERVAL}s..."
     sleep "$HEALTH_INTERVAL"
 done
 
