@@ -3,14 +3,30 @@
 # deploy-bluegreen.sh — FieldTrack 2.0 Blue-Green Deployment
 #
 # State machine:
-#   INIT -> PRE_FLIGHT -> PULL_IMAGE -> RESOLVE_SLOT -> START_INACTIVE
-#        -> HEALTH_CHECK_INTERNAL -> SWITCH_NGINX -> HEALTH_CHECK_PUBLIC
-#        -> CLEANUP -> SUCCESS
+#   INIT
+#   -> PRE_FLIGHT      (preflight.sh + env validation)
+#   -> PULL_IMAGE      (with timeout guard)
+#   -> RESOLVE_SLOT    (recovery-aware slot detection)
+#   -> IDEMPOTENCY     (skip if same SHA already running)
+#   -> START_INACTIVE  (with timeout + image immutability check)
+#   -> HEALTH_CHECK_INTERNAL  (connectivity pre-check + readiness loop)
+#   -> SWITCH_NGINX    (nginx -t gate + atomic slot write)
+#   -> HEALTH_CHECK_PUBLIC    (DNS/TLS/CDN end-to-end)
+#   -> STABILITY_CHECK (post-switch re-verify after settle window)
+#   -> CLEANUP         (graceful shutdown of old container)
+#   -> SUCCESS         (truth check + last-known-good snapshot)
+#
+# Deployment classification states emitted via _ft_state:
+#   DEPLOY_SUCCESS          -- zero-downtime deploy completed
+#   DEPLOY_FAILED_SAFE      -- deploy failed, old container still healthy
+#   DEPLOY_FAILED_ROLLBACK  -- deploy failed AND rollback was triggered
+#   DEPLOY_FAILED_FATAL     -- deploy AND rollback both failed (manual needed)
 #
 # On failure:
-#   -> ROLLBACK (nginx restored, slot restored, failed container removed)
-#   -> ROLLBACK_COMPLETE  exit 1  -- deploy failed, system restored
-#   -> FAILURE            exit 2  -- deploy AND rollback failed, manual needed
+#   -> if active container still running  -> DEPLOY_FAILED_SAFE  exit 1
+#   -> if active container gone           -> rollback triggered
+#      -> rollback succeeded              -> DEPLOY_FAILED_ROLLBACK  exit 1
+#      -> rollback failed                 -> DEPLOY_FAILED_FATAL     exit 2
 #
 # Slot state file: /var/run/fieldtrack/active-slot
 #   /var/run is a tmpfs (cleared on reboot). The _ft_resolve_slot() recovery
@@ -20,7 +36,7 @@
 #
 # Exit codes:
 #   0  deployment succeeded
-#   1  deployment failed, automatic rollback succeeded (system restored)
+#   1  deployment failed, system still serving (safe or rollback-recovered)
 #   2  deployment AND rollback failed (requires manual intervention)
 # =============================================================================
 set -euo pipefail
@@ -68,6 +84,32 @@ _ft_snapshot() {
         || printf '[DEPLOY]     (docker ps unavailable)\n' >&2
     printf '[DEPLOY] -----------------------------------------------------------\n' >&2
     set -x
+}
+
+# ---------------------------------------------------------------------------
+# DEPLOYMENT CLASSIFICATION -- single-source exit helper
+#   All terminal exit paths MUST go through _ft_exit to avoid state drift.
+#
+#   _ft_exit <code> <STATE> [key=value ...]
+#     code 0 -> DEPLOY_SUCCESS
+#     code 1 -> DEPLOY_FAILED_SAFE | DEPLOY_FAILED_ROLLBACK
+#     code 2 -> DEPLOY_FAILED_FATAL
+#
+#   DEPLOY_SUCCESS          zero-downtime deploy completed
+#   DEPLOY_FAILED_SAFE      deploy failed, old container still serving
+#   DEPLOY_FAILED_ROLLBACK  deploy failed, rollback triggered (system restored)
+#   DEPLOY_FAILED_FATAL     deploy AND rollback both failed (manual needed)
+# ---------------------------------------------------------------------------
+_ft_exit() {
+    local code="$1"; shift
+    _ft_state "$@"
+    exit "$code"
+}
+
+# Kept for compatibility; delegates to _ft_exit for a final classify+exit in one line.
+_ft_classify() {
+    local outcome="$1"; shift
+    _ft_state "$outcome" "outcome=$outcome $*"
 }
 
 # ---------------------------------------------------------------------------
@@ -324,6 +366,25 @@ set -x
 _ft_log "msg='env contract validated'"
 
 # ---------------------------------------------------------------------------
+# PREFLIGHT CHECK  (policy=warn: missing preflight logs a warning, does not abort)
+# ---------------------------------------------------------------------------
+if [ "$CI_MODE" != "true" ] && [ -x "$SCRIPT_DIR/preflight.sh" ]; then
+    _ft_state "PREFLIGHT" "msg='running preflight checks'"
+    if ! "$SCRIPT_DIR/preflight.sh" 2>&1; then
+        _ft_log "level=ERROR msg='preflight checks failed -- aborting deploy'"
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=preflight_failed"
+    fi
+    _ft_log "msg='preflight checks passed'"
+elif [ "$CI_MODE" != "true" ]; then
+    _ft_log "level=WARN msg='preflight.sh not found or not executable -- continuing (policy=warn)' path=$SCRIPT_DIR/preflight.sh"
+fi
+
+# ---------------------------------------------------------------------------
+# DEPLOY METADATA -- structured log emitted once per deploy for observability
+# ---------------------------------------------------------------------------
+_ft_log "msg='deploy metadata' sha=$IMAGE_SHA image=$IMAGE script_dir=$SCRIPT_DIR repo_dir=$REPO_DIR ci_mode=$CI_MODE app_env=${APP_ENV:-unset}"
+
+# ---------------------------------------------------------------------------
 # [1/7] PULL IMAGE
 # ---------------------------------------------------------------------------
 _ft_state "PULL_IMAGE" "msg='pulling container image' sha=$IMAGE_SHA"
@@ -331,7 +392,7 @@ _ft_state "PULL_IMAGE" "msg='pulling container image' sha=$IMAGE_SHA"
 if [ "$CI_MODE" = "true" ]; then
     _ft_log "msg='CI_MODE=true -- skipping image pull, using local image'"
 else
-    docker pull "$IMAGE"
+    timeout 300 docker pull "$IMAGE"
     _ft_log "msg='image pulled' image=$IMAGE"
 fi
 
@@ -358,6 +419,31 @@ fi
 _ft_log "msg='slot resolved' active=$ACTIVE active_port=$ACTIVE_PORT inactive=$INACTIVE inactive_port=$INACTIVE_PORT"
 
 # ---------------------------------------------------------------------------
+# IDEMPOTENCY GUARD -- skip deploy if this exact SHA is already the active container
+# ---------------------------------------------------------------------------
+_ft_state "IDEMPOTENCY" "msg='checking if target SHA already deployed' sha=$IMAGE_SHA"
+
+if [ "$CI_MODE" != "true" ]; then
+    _RUNNING_IMAGE=$(docker inspect --format '{{.Config.Image}}' "$ACTIVE_NAME" 2>/dev/null || echo "")
+    if [ "$_RUNNING_IMAGE" = "$IMAGE" ]; then
+        # SHA matches -- only skip if the active container is also healthy.
+        # If it is unhealthy, proceed so the deploy restarts it cleanly.
+        _IDEMPOTENT_HEALTH=$(timeout 4 curl -s --max-time 3 \
+            "http://127.0.0.1:$ACTIVE_PORT/ready" 2>/dev/null || echo "")
+        if echo "$_IDEMPOTENT_HEALTH" | grep -q '"status":"ready"' 2>/dev/null; then
+            _ft_log "msg='target SHA already running and healthy -- nothing to do' container=$ACTIVE_NAME image=$IMAGE"
+            _ft_exit 0 "DEPLOY_SUCCESS" "reason=idempotent_noop sha=$IMAGE_SHA container=$ACTIVE_NAME"
+        else
+            _ft_log "msg='idempotent SHA match but active container not healthy -- proceeding with deploy' container=$ACTIVE_NAME"
+        fi
+        unset _IDEMPOTENT_HEALTH
+    else
+        _ft_log "msg='SHA differs from running image -- proceeding' running=${_RUNNING_IMAGE:-none} target=$IMAGE"
+    fi
+    unset _RUNNING_IMAGE
+fi
+
+# ---------------------------------------------------------------------------
 # [3/7] START INACTIVE CONTAINER
 # ---------------------------------------------------------------------------
 _ft_state "START_INACTIVE" "msg='starting inactive container' name=$INACTIVE_NAME port=$INACTIVE_PORT"
@@ -371,10 +457,11 @@ fi
 
 if docker ps -a --format '{{.Names}}' | grep -Eq "^${INACTIVE_NAME}$"; then
     _ft_log "msg='removing stale container' name=$INACTIVE_NAME"
-    docker rm -f "$INACTIVE_NAME"
+    docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
+    docker rm "$INACTIVE_NAME"
 fi
 
-docker run -d \
+timeout 60 docker run -d \
   --name "$INACTIVE_NAME" \
   --network "$NETWORK" \
   -p "127.0.0.1:$INACTIVE_PORT:$APP_PORT" \
@@ -385,6 +472,21 @@ docker run -d \
   "$IMAGE"
 
 _ft_log "msg='container started' name=$INACTIVE_NAME port=$INACTIVE_PORT"
+
+# IMAGE IMMUTABILITY CHECK -- confirm running container image matches target SHA.
+# Catches cases where a cached or wrong image was started.
+if [ "$CI_MODE" != "true" ]; then
+    _ACTUAL_IMAGE=$(docker inspect --format '{{.Config.Image}}' "$INACTIVE_NAME" 2>/dev/null || echo "")
+    if [ "$_ACTUAL_IMAGE" != "$IMAGE" ]; then
+        _ft_log "level=ERROR msg='image immutability check failed: running image does not match target' expected=$IMAGE actual=${_ACTUAL_IMAGE:-unknown}"
+        docker logs "$INACTIVE_NAME" --tail 50 >&2 || true
+        docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
+        docker rm "$INACTIVE_NAME" || true
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=image_immutability_check_failed expected=$IMAGE actual=${_ACTUAL_IMAGE:-unknown}"
+    fi
+    _ft_log "msg='image immutability check passed' image=$_ACTUAL_IMAGE"
+    unset _ACTUAL_IMAGE
+fi
 
 # ---------------------------------------------------------------------------
 # [4/7] INTERNAL HEALTH CHECK
@@ -397,10 +499,35 @@ sleep 5
 HEALTH_ENDPOINT="/ready"
 [ "$CI_MODE" = "true" ] && HEALTH_ENDPOINT="/health"
 
+# CONNECTIVITY PRE-CHECK -- confirm port is reachable before entering retry loop.
+# Fail fast rather than burning all MAX_HEALTH_ATTEMPTS on a misconfigured port.
+_CONN_ATTEMPTS=0
+_CONN_OK=false
+while [ "$_CONN_ATTEMPTS" -lt 5 ]; do
+    _CONN_ATTEMPTS=$((_CONN_ATTEMPTS + 1))
+    if timeout 3 curl -s -o /dev/null -w '%{http_code}' \
+            "http://127.0.0.1:$INACTIVE_PORT/health" 2>/dev/null | grep -qE '^[0-9]+$'; then
+        _CONN_OK=true
+        break
+    fi
+    _ft_log "msg='connectivity pre-check waiting' attempt=$_CONN_ATTEMPTS/5 port=$INACTIVE_PORT"
+    sleep 2
+done
+if [ "$_CONN_OK" = "false" ]; then
+    _ft_log "level=ERROR msg='container port not reachable after connectivity pre-check' port=$INACTIVE_PORT"
+    docker logs "$INACTIVE_NAME" --tail 100 >&2 || true
+    docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
+    docker rm "$INACTIVE_NAME" || true
+    _ft_log "msg='active container still serving -- deploy failed non-destructively' container=$ACTIVE_NAME"
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=container_port_not_reachable port=$INACTIVE_PORT"
+fi
+unset _CONN_ATTEMPTS _CONN_OK
+_ft_log "msg='connectivity pre-check passed' port=$INACTIVE_PORT"
+
 ATTEMPT=0
 until true; do
     ATTEMPT=$((ATTEMPT + 1))
-    STATUS=$(curl --max-time 2 -s -o /dev/null -w "%{http_code}" \
+    STATUS=$(timeout 5 curl --max-time 4 -s -o /dev/null -w "%{http_code}" \
         "http://127.0.0.1:$INACTIVE_PORT${HEALTH_ENDPOINT}" || echo "000")
 
     if [ "$STATUS" = "200" ]; then
@@ -410,20 +537,25 @@ until true; do
 
     if ! docker ps --format '{{.Names}}' | grep -q "^${INACTIVE_NAME}$"; then
         _ft_log "level=ERROR msg='container exited unexpectedly' name=$INACTIVE_NAME"
-        docker logs "$INACTIVE_NAME" --tail 100 || true
-        docker rm -f "$INACTIVE_NAME" || true
-        exit 1
+        docker logs "$INACTIVE_NAME" --tail 100 >&2 || true
+        docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
+        docker rm "$INACTIVE_NAME" || true
+        _ft_log "msg='active container still serving -- deploy failed non-destructively' container=$ACTIVE_NAME"
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=new_container_crashed"
     fi
 
     if [ "$ATTEMPT" -ge "$MAX_HEALTH_ATTEMPTS" ]; then
         _ft_log "level=ERROR msg='internal health check timed out' attempts=$ATTEMPT status=$STATUS endpoint=http://127.0.0.1:$INACTIVE_PORT${HEALTH_ENDPOINT}"
-        docker logs "$INACTIVE_NAME" --tail 100 || true
-        docker rm -f "$INACTIVE_NAME" || true
-        exit 1
+        docker logs "$INACTIVE_NAME" --tail 100 >&2 || true
+        docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
+        docker rm "$INACTIVE_NAME" || true
+        _ft_log "msg='active container still serving -- deploy failed non-destructively' container=$ACTIVE_NAME"
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=new_container_health_timeout attempts=$ATTEMPT"
     fi
 
     _ft_log "msg='waiting for readiness' attempt=$ATTEMPT/$MAX_HEALTH_ATTEMPTS status=$STATUS interval=${HEALTH_INTERVAL}s"
-    sleep "$HEALTH_INTERVAL"
+    # Add up to 1s of jitter to prevent synchronized retries under contention.
+    sleep $((HEALTH_INTERVAL + RANDOM % 2))
 done
 
 # ---------------------------------------------------------------------------
@@ -455,11 +587,23 @@ else
     if ! sudo nginx -t 2>&1; then
         _ft_log "level=ERROR msg='nginx config test failed -- restoring backup'"
         sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
-        exit 1
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_config_test_failed"
     fi
 
     sudo systemctl reload nginx
     _ft_log "msg='nginx reloaded' upstream=127.0.0.1:$INACTIVE_PORT"
+
+    # Upstream sanity check -- confirm nginx config actually points at the new port.
+    # Catches template substitution failures before traffic is affected.
+    _RELOAD_PORT=$(sudo grep -oE '127\.0\.0\.1:[0-9]+' "$NGINX_CONF" 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+    if [ "$_RELOAD_PORT" != "$INACTIVE_PORT" ]; then
+        _ft_log "level=ERROR msg='nginx upstream sanity check failed after reload' expected=$INACTIVE_PORT actual=${_RELOAD_PORT:-unreadable}"
+        sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
+        sudo nginx -t 2>&1 && sudo systemctl reload nginx || true
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_upstream_mismatch expected=$INACTIVE_PORT actual=${_RELOAD_PORT:-unreadable}"
+    fi
+    unset _RELOAD_PORT
+    _ft_log "msg='nginx upstream sanity check passed' port=$INACTIVE_PORT"
 
     # Write the slot file AFTER nginx reload so it always reflects what nginx
     # is currently serving. If the public health check then fails and we roll
@@ -526,10 +670,27 @@ else
 
         # Restore slot file to the slot that was active before this deploy attempt.
         _ft_write_slot "$ACTIVE"
-        docker rm -f "$INACTIVE_NAME" || true
+        docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
+        docker rm "$INACTIVE_NAME" || true
 
         unset _PUB_URL _PUB_PASSED _attempt _PUB_STATUS _PUB_BODY _NGINX_PORT
 
+        # Upgrade existence check to health check.
+        # Active container can be running but degraded; only skip rollback if it
+        # is actually serving traffic. If unhealthy, the rollback IS needed.
+        if docker ps --format '{{.Names}}' | grep -q "^${ACTIVE_NAME}$"; then
+            _ACTIVE_HEALTH=$(timeout 4 curl -s --max-time 3 \
+                "http://127.0.0.1:$ACTIVE_PORT/ready" 2>/dev/null || echo "")
+            if echo "$_ACTIVE_HEALTH" | grep -q '"status":"ready"' 2>/dev/null; then
+                _ft_log "msg='deploy failed but active container healthy -- skipping rollback' container=$ACTIVE_NAME"
+                unset _ACTIVE_HEALTH
+                _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=public_health_check_failed active_container_healthy=true"
+            fi
+            unset _ACTIVE_HEALTH
+            _ft_log "msg='active container running but NOT healthy -- treating as degraded, rollback needed' container=$ACTIVE_NAME"
+        fi
+
+        _ft_log "msg='system degraded -- triggering rollback' container=$ACTIVE_NAME"
         if [ "${FIELDTRACK_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
             _ft_log "msg='triggering image rollback to previous stable SHA'"
             export FIELDTRACK_ROLLBACK_IN_PROGRESS=1
@@ -539,21 +700,79 @@ else
             # infinite loops; the lock only blocks unrelated concurrent deploys.
             _ft_release_lock
             if ! "$SCRIPT_DIR/rollback.sh" --auto; then
-                _ft_state "FAILURE" "reason='deploy_and_rollback_both_failed'"
                 _ft_snapshot
-                exit 2
+                _ft_exit 2 "DEPLOY_FAILED_FATAL" "reason=deploy_and_rollback_both_failed"
             fi
-            _ft_state "ROLLBACK_COMPLETE" "msg='deploy failed but automatic rollback succeeded -- system restored'"
+            _ft_exit 1 "DEPLOY_FAILED_ROLLBACK" "reason=public_health_check_failed msg='rollback succeeded, system restored'"
         else
             _ft_log "msg='nested rollback guard reached -- stopping to prevent infinite loop'"
-            _ft_state "FAILURE" "reason='nested_rollback_guard'"
+            _ft_exit 1 "DEPLOY_FAILED_FATAL" "reason=nested_rollback_guard"
         fi
-
-        exit 1
     fi
 
     unset _PUB_URL _PUB_PASSED _attempt _PUB_STATUS _PUB_BODY _NGINX_PORT
     _ft_log "msg='public health check passed' port=$INACTIVE_PORT url=https://$API_HOSTNAME/ready"
+fi
+
+# ---------------------------------------------------------------------------
+# [6.5/7] STABILITY CHECK -- re-verify external endpoint after a settle window
+# Catches flapping services that pass the initial check then regress rapidly
+# ---------------------------------------------------------------------------
+_ft_state "STABILITY_CHECK" "msg='post-switch stability check' settle_seconds=5"
+
+if [ "$CI_MODE" != "true" ]; then
+    sleep 5
+    _STABLE=false
+    if _ft_check_external_ready; then
+        _STABLE=true
+        _ft_log "msg='stability check passed' url=https://$API_HOSTNAME/ready"
+    fi
+
+    if [ "$_STABLE" = "false" ]; then
+        _ft_log "level=ERROR msg='stability check failed -- service regressed after initial pass'"
+        _ft_snapshot
+
+        # Restore nginx + slot
+        _ft_log "msg='restoring previous nginx config (stability failure)'"
+        sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
+        if sudo nginx -t 2>&1 && sudo systemctl reload nginx; then
+            _ft_log "msg='nginx restored (stability failure)'"
+        else
+            _ft_log "level=ERROR msg='nginx restore failed during stability rollback -- check manually'"
+        fi
+        _ft_write_slot "$ACTIVE"
+        docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
+        docker rm "$INACTIVE_NAME" || true
+
+        # Upgrade existence check to health check (same pattern as public failure path).
+        if docker ps --format '{{.Names}}' | grep -q "^${ACTIVE_NAME}$"; then
+            _ACTIVE_HEALTH=$(timeout 4 curl -s --max-time 3 \
+                "http://127.0.0.1:$ACTIVE_PORT/ready" 2>/dev/null || echo "")
+            if echo "$_ACTIVE_HEALTH" | grep -q '"status":"ready"' 2>/dev/null; then
+                _ft_log "msg='active container healthy after stability failure -- skipping rollback' container=$ACTIVE_NAME"
+                unset _ACTIVE_HEALTH
+                _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=stability_check_failed active_container_healthy=true"
+            fi
+            unset _ACTIVE_HEALTH
+            _ft_log "msg='active container running but NOT healthy after stability failure -- rollback needed'"
+        fi
+
+        _ft_log "msg='triggering rollback after stability failure'"
+        if [ "${FIELDTRACK_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
+            export FIELDTRACK_ROLLBACK_IN_PROGRESS=1
+            _ft_release_lock
+            if ! "$SCRIPT_DIR/rollback.sh" --auto; then
+                _ft_snapshot
+                _ft_exit 2 "DEPLOY_FAILED_FATAL" "reason=stability_check_and_rollback_both_failed"
+            fi
+            _ft_exit 1 "DEPLOY_FAILED_ROLLBACK" "reason=stability_check_failed msg='rollback succeeded'"
+        else
+            _ft_exit 1 "DEPLOY_FAILED_FATAL" "reason=stability_nested_rollback_guard"
+        fi
+    fi
+    unset _STABLE
+else
+    _ft_log "msg='CI_MODE=true -- skipping stability check'"
 fi
 
 # ---------------------------------------------------------------------------
@@ -564,8 +783,10 @@ _ft_state "CLEANUP" "msg='removing previous active container' name=$ACTIVE_NAME"
 if [ "$CI_MODE" = "true" ]; then
     _ft_log "msg='CI_MODE=true -- skipping container cleanup'"
 else
-    docker rm -f "$ACTIVE_NAME" || true
-    _ft_log "msg='previous container removed' name=$ACTIVE_NAME"
+    # Graceful shutdown: allow in-flight requests to drain before forcing removal.
+    docker stop --time 10 "$ACTIVE_NAME" 2>/dev/null || true
+    docker rm "$ACTIVE_NAME" || true
+    _ft_log "msg='previous container removed (graceful)' name=$ACTIVE_NAME"
 fi
 
 _ft_state "SUCCESS" "msg='deployment complete' container=$INACTIVE_NAME sha=$IMAGE_SHA slot=$INACTIVE port=$INACTIVE_PORT"
