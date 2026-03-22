@@ -44,38 +44,26 @@ jobs:
       - name: Fetch branches
         run: git fetch origin master beta
 
-      - name: Check existing PR (with jitter + exp backoff)
-        id: check
+      - name: Get existing PR
+        id: pr
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
-          # Poll with jitter + exponential backoff (defends against abuse detection)
-          PR="none"
-          for attempt in {1..5}; do
-            PR=$(gh pr list \
-              --base master \
-              --head beta \
-              --state open \
-              --json number \
-              --jq '.[0].number // "none"') && break
-            
-            if [ $attempt -lt 5 ]; then
-              # Exponential backoff: 2^attempt seconds + jitter (0-1s)
-              backoff=$((2 ** (attempt - 1)))
-              jitter=$((RANDOM % 1000))
-              total_sleep=$(echo "scale=3; $backoff + $jitter / 1000" | bc)
-              sleep $total_sleep
-            fi
-          done
+          PR_NUMBER=$(gh pr list \
+            --base master \
+            --head beta \
+            --state open \
+            --json number \
+            --jq '.[0].number // ""')
 
-          echo "pr=$PR" >> $GITHUB_OUTPUT
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
 
       - name: Generate commit summary
         id: summary
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
-          PR=${{ steps.check.outputs.pr }}
+          PR=${{ steps.pr.outputs.pr_number }}
 
           # If PR exists, get commits from PR
           if [ -n "$PR" ]; then
@@ -105,6 +93,7 @@ jobs:
           printf "%s\n" "$COMMITS" > commits.txt
 
       - name: Create PR if not exists
+        if: steps.pr.outputs.pr_number == ''
         id: create
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
@@ -153,15 +142,7 @@ jobs:
             --title "🚀 Release: beta → master" \
             --body-file body.txt
 
-          # Query the newly created PR from authoritative source
-          NEW_PR=$(gh pr list \
-            --base master \
-            --head beta \
-            --state open \
-            --json number \
-            --jq '.[0].number')
-
-          echo "pr=$NEW_PR" >> $GITHUB_OUTPUT
+          echo "✓ PR created successfully"
 
       - name: Update PR summary (poll until queryable)
         env:
@@ -414,3 +395,21 @@ jobs:
               echo "    (watchdog will catch this in 5 minutes or on next push)"
             fi
           fi
+
+      - name: Ensure PR exists
+        env:
+          GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
+        run: |
+          PR_NUMBER=$(gh pr list \
+            --base master \
+            --head beta \
+            --state open \
+            --json number \
+            --jq '.[0].number // ""')
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "::error::ERROR: PR was not created or enabled"
+            exit 1
+          fi
+
+          echo "✓ PR #$PR_NUMBER successfully created and ready for auto-merge"
