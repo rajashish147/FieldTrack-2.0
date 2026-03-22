@@ -105,11 +105,16 @@ jobs:
           printf "%s\n" "$COMMITS" > commits.txt
 
       - name: Create PR if not exists
-        if: steps.summary.outputs.empty == 'false'
         id: create
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
+          # Skip if no commits to PR
+          if [ ! -f commits.txt ]; then
+            echo "No commits to PR, skipping"
+            exit 0
+          fi
+
           # Double-check: guard against race condition where 2 workflows try to create PR
           EXISTING_PR=$(gh pr list \
             --base master \
@@ -159,7 +164,6 @@ jobs:
           echo "pr=$NEW_PR" >> $GITHUB_OUTPUT
 
       - name: Update PR summary (poll until queryable)
-        if: steps.summary.outputs.empty == 'false'
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
@@ -206,7 +210,6 @@ jobs:
           gh pr edit "$PR" --body-file final_body.txt
 
       - name: Ensure PR is mergeable (rebase if needed + pre-sync)
-        if: steps.summary.outputs.empty == 'false'
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
@@ -304,7 +307,6 @@ jobs:
           fi
 
       - name: Enable auto-merge (poll + verify idempotency)
-        if: steps.summary.outputs.empty == 'false'
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
@@ -376,7 +378,6 @@ jobs:
           fi
 
       - name: Debug PR state
-        if: steps.summary.outputs.empty == 'false'
         env:
           GH_TOKEN: ${{ secrets.FIELDTRACK_PAT }}
         run: |
