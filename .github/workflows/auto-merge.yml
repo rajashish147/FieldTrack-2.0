@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 5
     # Run on pull_request events, skip only on [skip-ci] tagged commits
     # For schedule events, always run (will detect if PR exists and is mergeable)
-    if: |
+    if: |-
       (github.event_name == 'pull_request' && 
        !contains(github.event.head_commit.message, '[skip-ci]') &&
        github.event.pull_request.merged == false &&
