@@ -31,15 +31,11 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
-      - name: Sync master → beta
+      - name: Sync master → beta (force reset)
         run: |
           git fetch origin
           git checkout beta
-          git pull origin beta
-          git merge origin/master --no-edit || {
-            echo "::error::Merge conflict in sync-beta"
-            exit 1
-          }
-          git push origin beta
-          echo "✓ beta synced with master"
+          git reset --hard origin/master
+          git push origin beta --force
+          echo "✓ beta now matches master exactly"
           git log --oneline -3
