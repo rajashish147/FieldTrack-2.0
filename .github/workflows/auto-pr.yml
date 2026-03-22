@@ -19,18 +19,27 @@ jobs:
   auto-pr:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Skip this workflow on [skip-ci] commits (from sync-beta.yml)
-    if: "!contains(github.event.head_commit.message, '[skip-ci]')"
 
     steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Skip if [skip-ci] marker present
+        run: |
+          # Check commit message for [skip-ci] marker
+          COMMIT_MESSAGE=$(git log -1 --pretty=%B)
+          if grep -q '\[skip-ci\]' <<< "$COMMIT_MESSAGE"; then
+            echo "::notice::Skipping workflow due to [skip-ci] marker"
+            exit 78  # GitHub Actions skip signal
+          fi
+
       - name: Validate PAT exists
         run: |
           if [ -z "${{ secrets.FIELDTRACK_PAT }}" ]; then
             echo "::error::FIELDTRACK_PAT secret is not set. Without a PAT, auto-merge commits are attributed to github-actions[bot] and the resulting push to master will NOT trigger deploy.yml."
             exit 1
           fi
-
-      - uses: actions/checkout@v5
 
       - name: Fetch branches
         run: git fetch origin master beta
