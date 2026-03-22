@@ -26,12 +26,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Configure Git identity
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
       - name: Sync master → beta
         run: |
           git fetch origin
           git checkout beta
           git pull origin beta
-          git merge origin/master --no-edit
+          git merge origin/master --no-edit || {
+            echo "::error::Merge conflict in sync-beta"
+            exit 1
+          }
           git push origin beta
           echo "✓ beta synced with master"
           git log --oneline -3
