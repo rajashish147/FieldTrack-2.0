@@ -181,14 +181,15 @@ request() {
     if [ -n "$TOKEN" ]; then
       STATUS=$(curl -L -s --max-time 15 -D "$TMP_HEADERS" -o "$TMP_BODY" -w "%{http_code}" \
         -H "Authorization: Bearer $TOKEN" \
-        -X "$METHOD" "$API$URL")
+        -X "$METHOD" "$API$URL" || echo "000")
     else
       STATUS=$(curl -L -s --max-time 15 -D "$TMP_HEADERS" -o "$TMP_BODY" -w "%{http_code}" \
-        -X "$METHOD" "$API$URL")
+        -X "$METHOD" "$API$URL" || echo "000")
     fi
 
     # Retry on transient gateway errors (502/503/504) from nginx during deploy
-    if [ "$STATUS" = "502" ] || [ "$STATUS" = "503" ] || [ "$STATUS" = "504" ]; then
+    # Also retry on 000 (connection refused / timeout) to handle slow restarts
+    if [ "$STATUS" = "502" ] || [ "$STATUS" = "503" ] || [ "$STATUS" = "504" ] || [ "$STATUS" = "000" ]; then
       if [ "$attempt" -lt "$MAX_RETRIES" ]; then
         echo "  ↻ $METHOD $URL returned $STATUS, retrying ($attempt/$MAX_RETRIES)..." >&2
         sleep 3
