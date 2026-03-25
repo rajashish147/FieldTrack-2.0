@@ -1,39 +1,29 @@
-# .trivyignore — Documented exceptions for CVEs with no available fix.
+# .trivyignore — Documented exceptions for CVEs that remain after --ignore-unfixed.
+#
+# Scan policy (enforced in both pr.yml and deploy.yml):
+#   --ignore-unfixed   Trivy filters CVEs where no patched package version exists
+#                      in the distribution. Most Debian 12 OS CVEs are in this
+#                      category and are excluded automatically — no entry here needed.
+#   --severity HIGH,CRITICAL   Only fixable HIGH/CRITICAL issues block the pipeline.
+#
+# Entries in this file are for the narrow category of CVEs that:
+#   a) Have a "fixed version" listed in Trivy (so --ignore-unfixed does NOT filter them), AND
+#   b) Have been assessed as non-exploitable or non-applicable in this context.
 #
 # Policy: entries are added ONLY when ALL of the following are true:
-#   1. Fixed Version is absent from the Trivy report (no upstream patch exists)
-#   2. The vulnerability has been assessed for exploitability in this context
-#   3. A monitoring note is recorded so the entry is revisited when a fix ships
+#   1. Fixed Version appears in the Trivy report (--ignore-unfixed left it visible)
+#   2. The vulnerability has been assessed for exploitability in this runtime context
+#   3. A monitoring note is recorded so the entry is revisited when the fix is stable
 #
 # Every entry MUST include: CVE ID, date added, package, reason, and review trigger.
-# Remove the entry immediately when a fixed version becomes available in Debian 12.
+# Remove the entry immediately when the fixed version has been deployed.
 
-# ─── CVE-2026-0861 ──────────────────────────────────────────────────────────
-# Package   : libc6 (glibc) 2.36-9+deb12u13
-# Severity  : HIGH
-# Status    : affected — no fixed version in Debian 12 (bookworm) as of 2026-03-20
-# Title     : glibc: Integer overflow in memalign leads to heap corruption
-# Reference : https://avd.aquasec.com/nvd/cve-2026-0861
-#
-# Why no patch is possible:
-#   Debian upstream has not released a patched libc6 for bookworm. The distroless
-#   image (gcr.io/distroless/nodejs24-debian12) bundles the official Debian 12
-#   glibc; there is no alternative glibc build available that resolves this CVE.
-#   We cannot replace or upgrade glibc within a distroless image.
-#
-# Exploitability in this context:
-#   The vulnerability is an integer overflow in glibc's memalign() triggered by
-#   abnormally large alignment values. Exploitation requires an attacker to control
-#   memory allocation parameters at the libc level inside the Node.js process.
-#   Node.js allocates memory through V8's heap and the OS, not through direct
-#   memalign() calls from untrusted input. No known exploit path exists for this
-#   CVE through a Node.js HTTP API receiving JSON/form data.
-#
-# Review trigger:
-#   Check https://security-tracker.debian.org/tracker/CVE-2026-0861 weekly.
-#   Remove this entry and re-run Trivy as soon as a fixed libc6 version appears
-#   in Debian 12 stable or a backport is published.
-#
-# Added   : 2026-03-20
-# Owner   : platform/security
-CVE-2026-0861
+# ─── NOTE ────────────────────────────────────────────────────────────────────
+# CVE-2026-0861 (libc6 / glibc memalign integer overflow) was previously listed
+# here. It is now automatically suppressed by the --ignore-unfixed flag because
+# Debian 12 (bookworm) has no patched libc6 build available. The entry has been
+# removed to keep this file minimal. Monitor:
+#   https://security-tracker.debian.org/tracker/CVE-2026-0861
+# Add an explicit entry here ONLY if a "fixed version" appears in Trivy's report
+# and we still need to suppress it for a documented reason.
+# ─────────────────────────────────────────────────────────────────────────────

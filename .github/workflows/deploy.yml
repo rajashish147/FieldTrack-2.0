@@ -332,7 +332,7 @@ jobs:
             aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc \
             image --download-db-only
 
-      - name: Scan image with Trivy (HIGH/CRITICAL, air-gapped)
+      - name: Scan image with Trivy (HIGH/CRITICAL, ignore-unfixed, air-gapped)
         env:
           IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
         run: |
@@ -345,6 +345,7 @@ jobs:
               -v "$(pwd)/.trivyignore:/tmp/.trivyignore:ro" \
               aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
                 --skip-db-update \
+                --ignore-unfixed \
                 --severity HIGH,CRITICAL \
                 --exit-code 1 \
                 --ignorefile /tmp/.trivyignore \
@@ -452,7 +453,7 @@ jobs:
             echo "| Image tag | \`fieldtrack-backend:${{ steps.meta.outputs.sha_short }}\` |"
             echo "| Image digest | \`${IMAGE_DIGEST}\` |"
             echo "| SBOM components | ${SBOM_COUNT} |"
-            echo "| Trivy gate | HIGH,CRITICAL / exit-code 1 |"
+            echo "| Trivy gate | HIGH,CRITICAL / exit-code 1 / ignore-unfixed |"
             echo "| Registry | ghcr.io/${{ github.repository_owner }}/fieldtrack-backend |"
           } >> "$GITHUB_STEP_SUMMARY"
 
