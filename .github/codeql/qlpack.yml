@@ -1,0 +1,9 @@
+name: fieldtrack/security-queries
+version: 1.0.0
+description: >
+  Custom CodeQL queries for the FieldTrack 2.0 backend.
+  Targets Fastify + Supabase multi-tenant SaaS patterns:
+  tenant isolation, JWT claim misuse, and missing role guards.
+library: false
+dependencies:
+  codeql/javascript-all: '*'

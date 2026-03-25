@@ -10,22 +10,22 @@ import { paginationSchema } from "./attendance.schema.js";
  * ADMIN-only routes use the requireRole middleware.
  */
 export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
-  // Check in — any authenticated user
+  // Check in — EMPLOYEE only (ADMIN cannot participate in attendance)
   app.post(
     "/attendance/check-in",
     {
       schema: { tags: ["attendance"] },
-      preValidation: [authenticate],
+      preValidation: [authenticate, requireRole("EMPLOYEE")],
     },
     attendanceController.checkIn,
   );
 
-  // Check out — any authenticated user
+  // Check out — EMPLOYEE only (ADMIN cannot participate in attendance)
   app.post(
     "/attendance/check-out",
     {
       schema: { tags: ["attendance"] },
-      preValidation: [authenticate],
+      preValidation: [authenticate, requireRole("EMPLOYEE")],
     },
     attendanceController.checkOut,
   );

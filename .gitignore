@@ -98,9 +98,25 @@ ehthumbs.db
 desktop.ini
 
 # ----------------
+# CodeQL
+# ----------------
+codeql-db/
+results/
+*.sarif
+
+# ----------------
+# Supabase local dev
+# ----------------
+.supabase/
+
+# ----------------
 # IDE / Editors
 # ----------------
-.vscode/
+# Allow shared workspace settings and extension recommendations;
+# ignore personal/machine-specific files (launch.json, mcp.json, tasks.json).
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo

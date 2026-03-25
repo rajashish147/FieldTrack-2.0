@@ -47,12 +47,16 @@ export async function adminRetryIntentsRoutes(app: FastifyInstance): Promise<voi
 
         const offset = (query.page - 1) * query.limit;
 
-        // Build query with optional status filter
+        // C1 fix: always scope to the authenticated admin's organization.
+        // supabaseServiceClient bypasses RLS — tenant isolation is app-enforced here.
+        // After migration 20260326000100_add_org_id_to_retry_intents.sql the column
+        // exists as a proper FK, replacing the previous unfiltered (cross-tenant) query.
         let queryBuilder = supabase
           .from("queue_retry_intents")
           .select("id, queue_name, job_key, payload, status, retry_count, error_message, next_retry_at, created_at, updated_at", {
             count: "exact",
           })
+          .eq("organization_id", request.organizationId)
           .order("updated_at", { ascending: false })
           .range(offset, offset + query.limit - 1);
 

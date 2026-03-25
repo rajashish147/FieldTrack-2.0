@@ -224,6 +224,8 @@ export const sessionSummaryService = {
 
     // 4b. Sync pre-computed columns on attendance_sessions so the analytics layer
     // can aggregate directly without joining session_summaries (CRIT-01 fix).
+    // organization_id scope added as defense-in-depth: the service client bypasses
+    // RLS, so the WHERE clause must enforce tenant ownership explicitly.
     await supabase
       .from("attendance_sessions")
       .update({
@@ -231,7 +233,8 @@ export const sessionSummaryService = {
         total_duration_seconds: durationSeconds,
         distance_recalculation_status: "done",
       })
-      .eq("id", sessionId);
+      .eq("id", sessionId)
+      .eq("organization_id", session.organization_id);
 
     // Keep employee_latest_sessions snapshot in sync — fire-and-forget.
     attendanceRepository
@@ -352,6 +355,7 @@ export const sessionSummaryService = {
 
     // 4b. Sync pre-computed columns on attendance_sessions so the analytics layer
     // can aggregate directly without joining session_summaries (CRIT-01 fix).
+    // organization_id scope added as defense-in-depth (service client bypasses RLS).
     await supabase
       .from("attendance_sessions")
       .update({
@@ -359,7 +363,8 @@ export const sessionSummaryService = {
         total_duration_seconds: durationSeconds,
         distance_recalculation_status: "done",
       })
-      .eq("id", sessionId);
+      .eq("id", sessionId)
+      .eq("organization_id", sessionData.organization_id as string);
 
     // Keep employee_latest_sessions snapshot in sync — fire-and-forget.
     attendanceRepository

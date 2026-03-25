@@ -46,6 +46,9 @@ export async function persistRetryIntent(
         queue_name: queueName,
         job_key: jobKey,
         payload,
+        // Promote organization_id to a top-level column so the admin endpoint
+        // can filter by org without parsing JSONB (C1 security fix).
+        organization_id: payload.organizationId ?? null,
         status: "pending",
         error_message: reason,
         next_retry_at: new Date().toISOString(),

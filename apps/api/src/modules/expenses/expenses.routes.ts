@@ -53,7 +53,10 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
           mimeType: z.string().optional(),
         }),
       },
-      preValidation: [authenticate],
+      // EMPLOYEE only — the signed URL path embeds employeeId; ADMIN has no
+      // employee record and will be rejected by requireEmployeeContext() in the
+      // service layer anyway. Route-level guard makes the contract explicit.
+      preValidation: [authenticate, requireRole("EMPLOYEE")],
     },
     expensesController.getReceiptUploadUrl,
   );

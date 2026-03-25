@@ -1,0 +1,15 @@
+# FieldTrack 2.0 Security Query Suite
+#
+# Run all custom security queries targeting the Fastify + Supabase
+# multi-tenant architecture.
+#
+# Usage (local):
+#   codeql database analyze codeql-db \
+#     .github/codeql/queries/fieldtrack-security-suite.qls \
+#     --format=sarif-latest \
+#     --output=results/fieldtrack-security.sarif
+- description: "FieldTrack 2.0 — Custom Security Checks"
+- query: ./queries/fastify-missing-role-guard.ql
+- query: ./queries/fastify-employee-route-missing-role-guard.ql
+- query: ./queries/supabase-missing-tenant-filter.ql
+- query: ./queries/jwt-user-metadata-access.ql
