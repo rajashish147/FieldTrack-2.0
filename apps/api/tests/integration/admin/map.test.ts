@@ -20,6 +20,14 @@ vi.mock("../../../src/config/supabase.js", () => ({
   supabaseServiceClient: { rpc: vi.fn() },
 }));
 
+vi.mock("../../../src/auth/jwtVerifier.js", () => ({
+  verifySupabaseToken: vi.fn().mockImplementation(async (token: string) => {
+    const parts = token.split(".");
+    if (parts.length !== 3) throw new Error("Invalid JWT structure");
+    return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+  }),
+}));
+
 import {
   buildTestApp,
   signEmployeeToken,

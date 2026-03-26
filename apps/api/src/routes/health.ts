@@ -106,7 +106,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
         checks.redis = redisResult.status === "fulfilled" ? "ok" : "error";
         checks.supabase = supabaseResult.status === "fulfilled" ? "ok" : "error";
         checks.bullmq = bullmqResult.status === "fulfilled" ? "ok" : "error";
-        if (!shouldStartWorkers(process.env)) {
+        if (!shouldStartWorkers()) {
             checks.workers = { status: "skipped", active: 0, expected: 2 };
         } else {
             const started = areWorkersStarted();

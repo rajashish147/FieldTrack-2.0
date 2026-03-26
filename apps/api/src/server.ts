@@ -37,13 +37,12 @@ async function start(): Promise<void> {
 
     // Start workers and recovery explicitly after the server is listening.
     // This keeps worker lifecycle deterministic and prevents import-time starts.
-    const shouldStartWorkersNow = shouldStartWorkers(process.env);
+    const shouldStartWorkersNow = shouldStartWorkers();
     app.log.info(
       {
         shouldStartWorkers: shouldStartWorkersNow,
-        CI_MODE: process.env.CI_MODE,
-        SKIP_EXTERNAL_SERVICES: process.env.SKIP_EXTERNAL_SERVICES,
-        NODE_ENV: env.NODE_ENV,
+        workersEnabled: env.WORKERS_ENABLED,
+        appEnv: env.APP_ENV,
       },
       "[BOOT] worker startup decision",
     );
@@ -62,13 +61,10 @@ async function start(): Promise<void> {
     } else {
       app.log.info(
         {
-          skipExternalServices: process.env.SKIP_EXTERNAL_SERVICES,
-          ciMode: process.env.CI_MODE,
-          ci: process.env.CI,
-          nodeEnv: env.NODE_ENV,
+          workersEnabled: env.WORKERS_ENABLED,
           appEnv: env.APP_ENV,
         },
-        "Background workers and recovery are disabled in this runtime mode",
+        "Background workers not started — WORKERS_ENABLED=false or APP_ENV=test",
       );
     }
   } catch (error) {

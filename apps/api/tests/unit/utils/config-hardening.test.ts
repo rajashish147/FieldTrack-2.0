@@ -476,10 +476,6 @@ describe("getPrivateEnv() — secret config subset", () => {
     expect(getPrivateEnv()).toHaveProperty("SUPABASE_SERVICE_ROLE_KEY");
   });
 
-  it("contains SUPABASE_JWT_SECRET", () => {
-    expect(getPrivateEnv()).toHaveProperty("SUPABASE_JWT_SECRET");
-  });
-
   it("contains METRICS_SCRAPE_TOKEN key (value may be undefined in test env)", () => {
     expect("METRICS_SCRAPE_TOKEN" in getPrivateEnv()).toBe(true);
   });
@@ -571,15 +567,6 @@ describe("logStartupConfig", () => {
     const payloadStr = JSON.stringify(payload);
     expect(payloadStr).not.toContain("SERVICE_ROLE");
     expect(payloadStr).not.toContain(env.SUPABASE_SERVICE_ROLE_KEY);
-  });
-
-  it("does NOT include SUPABASE_JWT_SECRET in the logged payload", () => {
-    const logger = { info: vi.fn() };
-    logStartupConfig(logger);
-    const [payload] = logger.info.mock.calls[0] as [Record<string, unknown>];
-    const payloadStr = JSON.stringify(payload);
-    expect(payloadStr).not.toContain("JWT_SECRET");
-    expect(payloadStr).not.toContain(env.SUPABASE_JWT_SECRET);
   });
 
   it("does NOT include raw REDIS_URL in the logged payload (may contain password)", () => {
@@ -680,10 +667,6 @@ describe("env object — general invariants", () => {
 
   it("REDIS_URL starts with redis:// or rediss://", () => {
     expect(env.REDIS_URL).toMatch(/^rediss?:\/\//);
-  });
-
-  it("SUPABASE_JWT_SECRET is at least 32 characters", () => {
-    expect(env.SUPABASE_JWT_SECRET.length).toBeGreaterThanOrEqual(32);
   });
 
   it("TEMPO_ENDPOINT starts with http:// or https://", () => {

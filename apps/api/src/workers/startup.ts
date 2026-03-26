@@ -1,23 +1,38 @@
 import type { FastifyInstance } from "fastify";
+import { env } from "../config/env.js";
 
-type RuntimeFlags = Partial<
-  Record<"CI_MODE" | "CI" | "SKIP_EXTERNAL_SERVICES" | "NODE_ENV" | "APP_ENV", string>
->;
-
-function isEnabled(value: string | undefined): boolean {
-  return value === "true" || value === "1";
+/**
+ * Overrides accepted by shouldStartWorkers() for unit-test injection.
+ * Production code always calls shouldStartWorkers() with no arguments.
+ */
+interface WorkerEnvOverrides {
+  WORKERS_ENABLED?: boolean;
+  APP_ENV?: string;
+  NODE_ENV?: string;
 }
 
 /**
  * Centralized gate for background workers and recovery jobs.
- * Returns true only for real runtime mode where external dependencies are enabled.
+ *
+ * Returns true only when:
+ *  - WORKERS_ENABLED=true  (Redis and BullMQ are provisioned in this environment)
+ *  - APP_ENV is not "test"  (prevents accidental worker starts during unit tests)
+ *
+ * Infrastructure availability table:
+ *   Production: WORKERS_ENABLED=true  → workers start  ✅
+ *   Staging:    WORKERS_ENABLED=true  → workers start  ✅
+ *   CI:         WORKERS_ENABLED unset → workers skip   ✅  (no Redis in CI)
+ *   Local dev:  WORKERS_ENABLED=true if Redis available
+ *
+ * @param _overrides - Optional env overrides for unit-test injection only.
+ *                     Production callers always omit this parameter.
  */
-export function shouldStartWorkers(flags: RuntimeFlags = process.env): boolean {
-  const skipExternalServices = isEnabled(flags.SKIP_EXTERNAL_SERVICES);
-  const isCiMode = isEnabled(flags.CI_MODE) || isEnabled(flags.CI);
-  const isTestEnv = flags.NODE_ENV === "test" || flags.APP_ENV === "test";
-
-  return !skipExternalServices && !isCiMode && !isTestEnv;
+export function shouldStartWorkers(_overrides?: WorkerEnvOverrides): boolean {
+  const workersEnabled = _overrides?.WORKERS_ENABLED ?? env.WORKERS_ENABLED;
+  const appEnv  = _overrides?.APP_ENV  ?? env.APP_ENV;
+  const nodeEnv = _overrides?.NODE_ENV ?? env.NODE_ENV;
+  const isTest = appEnv === "test" || nodeEnv === "test";
+  return workersEnabled && !isTest;
 }
 
 let workersStarted = false;

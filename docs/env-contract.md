@@ -104,8 +104,7 @@ Validated by `apps/api/src/config/env.ts` (Zod schema, fail-fast).
 
 | Variable | Purpose |
 |----------|---------|
-| `SKIP_EXTERNAL_SERVICES` | Set to `"true"` in CI to disable Redis, Supabase, BullMQ initialisation. |
-| `CI_MODE` | Set to `"true"` in CI. Guards against `SKIP_EXTERNAL_SERVICES` misuse in production. |
+| `WORKERS_ENABLED` | Set to `"false"` in CI/test to disable BullMQ workers (Redis not required). Default `"true"` in production. |
 | `CI` | Auto-set by GitHub Actions. Used for logging only. |
 
 ---

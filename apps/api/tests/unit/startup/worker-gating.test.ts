@@ -2,62 +2,67 @@ import { describe, it, expect } from "vitest";
 import { shouldStartWorkers } from "../../../src/workers/startup.js";
 
 describe("shouldStartWorkers()", () => {
-  it("does not start workers in CI mode", () => {
+  it("does not start workers when WORKERS_ENABLED is false", () => {
     expect(
       shouldStartWorkers({
-        CI_MODE: "true",
-        SKIP_EXTERNAL_SERVICES: "false",
-        NODE_ENV: "production",
+        WORKERS_ENABLED: false,
+        APP_ENV: "production",
       }),
     ).toBe(false);
   });
 
-  it("does not start workers when external services are disabled", () => {
+  it("does not start workers when WORKERS_ENABLED is not set (undefined → false)", () => {
     expect(
       shouldStartWorkers({
-        CI_MODE: "false",
-        SKIP_EXTERNAL_SERVICES: "true",
-        NODE_ENV: "production",
+        WORKERS_ENABLED: undefined,
+        APP_ENV: "production",
       }),
     ).toBe(false);
   });
 
-  it("does not start workers in test environment", () => {
+  it("does not start workers in test environment even when WORKERS_ENABLED=true", () => {
     expect(
       shouldStartWorkers({
-        CI_MODE: "false",
-        SKIP_EXTERNAL_SERVICES: "false",
+        WORKERS_ENABLED: true,
+        APP_ENV: "test",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not start workers when NODE_ENV=test", () => {
+    expect(
+      shouldStartWorkers({
+        WORKERS_ENABLED: true,
         NODE_ENV: "test",
       }),
     ).toBe(false);
   });
 
-  it("starts workers in production runtime", () => {
+  it("starts workers in production with WORKERS_ENABLED=true", () => {
     expect(
       shouldStartWorkers({
-        CI_MODE: "false",
-        SKIP_EXTERNAL_SERVICES: "false",
+        WORKERS_ENABLED: true,
+        APP_ENV: "production",
         NODE_ENV: "production",
       }),
     ).toBe(true);
   });
 
-  it("treats CI=1 as CI mode", () => {
+  it("starts workers in staging with WORKERS_ENABLED=true", () => {
     expect(
       shouldStartWorkers({
-        CI: "1",
-        SKIP_EXTERNAL_SERVICES: "false",
+        WORKERS_ENABLED: true,
+        APP_ENV: "staging",
         NODE_ENV: "production",
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("treats APP_ENV=test as a no-worker runtime", () => {
+  it("does not start workers in development without WORKERS_ENABLED", () => {
     expect(
       shouldStartWorkers({
-        CI_MODE: "false",
-        SKIP_EXTERNAL_SERVICES: "false",
-        APP_ENV: "test",
+        WORKERS_ENABLED: false,
+        APP_ENV: "development",
       }),
     ).toBe(false);
   });

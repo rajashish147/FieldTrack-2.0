@@ -5,8 +5,8 @@ import { trace, context } from "@opentelemetry/api";
 import fp from "fastify-plugin";
 import { env } from "./config/env.js";
 import { getLoggerConfig } from "./config/logger.js";
-import { registerJwt } from "./plugins/jwt.js";
 import { registerRoutes } from "./routes/index.js";
+import { shouldStartWorkers } from "./workers/startup.js";
 import { AppError } from "./utils/errors.js";
 import prometheusPlugin from "./plugins/prometheus.js";
 // Phase 15: Dedicated security plugins
@@ -21,9 +21,6 @@ import { registerZod } from "./plugins/zod.plugin.js";
 import compressPlugin from "@fastify/compress";
 
 export async function buildApp(): Promise<FastifyInstance> {
-  // CI Mode: Skip external service initialization
-  const skipExternalServices = process.env.SKIP_EXTERNAL_SERVICES === "true";
-
   const app = Fastify({
     logger: getLoggerConfig(env.APP_ENV),
     trustProxy: true,
@@ -44,13 +41,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.log.info({
     apiBaseUrl: env.API_BASE_URL ?? "(unset)",
     apiHostname: env.API_BASE_URL ? new URL(env.API_BASE_URL).host : undefined,
-    skipExternal: skipExternalServices,
+    workersEnabled: env.WORKERS_ENABLED,
   }, "startup:config");
-
-  if (skipExternalServices) {
-    app.log.warn("SKIP_EXTERNAL_SERVICES=true — Redis, Supabase, and BullMQ will NOT be initialized");
-    app.log.warn("This mode is for CI testing only. DO NOT use in production.");
-  }
 
   // Register Zod validator/serializer compilers before any routes or plugins
   // that might add routes. This is the single place that enables Zod schema
@@ -176,12 +168,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     encodings: ["br", "gzip", "deflate"],
   });
 
-  // @fastify/jwt is only needed in test mode (HS256 test tokens).
-  // Production uses JWKS/ES256 verification in auth.ts via verifySupabaseToken().
-  if (env.APP_ENV === "test") {
-    await registerJwt(app);
-  }
-
   // Phase 19: OpenAPI documentation plugin — must be registered before routes
   // so that route schemas are properly captured in the OpenAPI specification
   await app.register(openApiPlugin);
@@ -191,10 +177,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Phase 22: Admin queue monitoring endpoint — registered outside registerRoutes
   // so integration tests (which call registerRoutes directly) are not affected.
-  // Requires Redis to be available; the queue objects are already instantiated at
-  // module load time by analytics.queue.ts and distance.queue.ts.
-  // Skip in CI mode when external services are unavailable.
-  if (!skipExternalServices) {
+  // Requires Redis and BullMQ; only registered when WORKERS_ENABLED=true.
+  if (shouldStartWorkers()) {
     const { adminQueuesRoutes } = await import("./modules/admin/queues.routes.js");
     const { adminRetryIntentsRoutes } = await import("./modules/admin/retry-intents.routes.js");
     await app.register(adminQueuesRoutes);

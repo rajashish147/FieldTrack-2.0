@@ -97,6 +97,10 @@ jobs:
     name: API Tests (unit + integration)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL_TEST }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY_TEST }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_TEST }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5

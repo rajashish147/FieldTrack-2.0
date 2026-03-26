@@ -419,13 +419,9 @@ else
   log_fail "Admin access /admin/expenses/export invalid or failed ($STATUS)"
 fi
 
-STATUS=$(request GET "/admin/queues" "$ADMIN_TOKEN")
-
-if validate_api_response "GET /admin/queues (admin)" && [ "$STATUS" = "200" ]; then
-  log_pass "Admin access /admin/queues"
-else
-  log_fail "Admin access /admin/queues invalid or failed ($STATUS) $(cat "$TMP_BODY")"
-fi
+# NOTE: /admin/queues is NOT tested here because it requires Redis and BullMQ,
+# which are only available in production/staging (WORKERS_ENABLED=true).
+# Use GET /ready on production to verify queue/worker health.
 
 # ------------------------------------------------
 # Summary

@@ -27,8 +27,8 @@ import { AppError } from "../../src/utils/errors.js";
 export const TEST_ORG_ID = "11111111-1111-4111-8111-111111111111";
 /** A second organisation used in cross-tenant isolation tests. */
 export const TEST_ORG_ID_B = "22222222-2222-4222-8222-222222222222";
-export const TEST_EMPLOYEE_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-export const TEST_ADMIN_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+export const TEST_EMPLOYEE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+export const TEST_ADMIN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 export const TEST_SESSION_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 // ─── App factory ─────────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ export function signEmployeeToken(
 ): string {
   // Embed employee_id so auth middleware can set request.employeeId without a DB call.
   // In tests, employee_id == userId for simplicity (same UUID, no actual DB mapping).
-  return app.jwt.sign({ sub: userId, role: "EMPLOYEE", organization_id: orgId, employee_id: userId });
+  return app.jwt.sign({ sub: userId, role: "EMPLOYEE", org_id: orgId, employee_id: userId });
 }
 
 export function signAdminToken(
@@ -97,5 +97,5 @@ export function signAdminToken(
   userId = TEST_ADMIN_ID,
   orgId = TEST_ORG_ID,
 ): string {
-  return app.jwt.sign({ sub: userId, role: "ADMIN", organization_id: orgId });
+  return app.jwt.sign({ sub: userId, role: "ADMIN", org_id: orgId });
 }

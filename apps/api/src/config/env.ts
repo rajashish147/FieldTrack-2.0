@@ -90,7 +90,7 @@ const envSchema = z
         val !== undefined && val !== ""
           ? val
           : (process.env["NODE_ENV"] ?? "development"),
-      z.enum(["development", "staging", "production", "test"]),
+      z.enum(["development", "staging", "production", "test", "ci"]),
     ),
 
     /**
@@ -198,14 +198,6 @@ const envSchema = z
      */
     SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
 
-    /**
-     * Supabase JWT signing secret (HS256).
-     * Used by @fastify/jwt in test mode to sign and verify test tokens.
-     * Must be at least 32 characters for HMAC-SHA256 security.
-     */
-    SUPABASE_JWT_SECRET: z
-      .string()
-      .min(32, "SUPABASE_JWT_SECRET must be at least 32 characters"),
 
     // ── Redis ─────────────────────────────────────────────────────────────────
 
@@ -347,6 +339,31 @@ const envSchema = z
       .min(1, "ANALYTICS_WORKER_CONCURRENCY must be at least 1")
       .max(50, "ANALYTICS_WORKER_CONCURRENCY must be at most 50 (database pressure above this is counterproductive)")
       .default(5),
+
+    // ── Infrastructure availability ────────────────────────────────────────
+
+    /**
+     * Opt-in flag indicating that Redis and BullMQ workers are available
+     * in this environment.
+     *
+     * Set to "true" only in environments where Redis is fully provisioned:
+     *   - Production:   WORKERS_ENABLED=true  (Redis ✅, workers ✅)
+     *   - Staging:      WORKERS_ENABLED=true  (if Redis is provisioned)
+     *   - CI:           unset / false          (Redis ❌, workers ❌)
+     *   - Local dev:    operator's choice
+     *
+     * When false (default):
+     *   - Background workers do NOT start
+     *   - Redis-backed rate limiting is NOT registered
+     *   - Admin queue routes are NOT registered
+     *
+     * This flag controls INFRASTRUCTURE availability, not business logic.
+     * Business logic is identical regardless of this flag's value.
+     */
+    WORKERS_ENABLED: z.preprocess(
+      (val) => val === "true" || val === "1" || val === true,
+      z.boolean().default(false),
+    ),
   })
 
   // ─── Production-only safety constraints ────────────────────────────────────
@@ -428,6 +445,20 @@ const envSchema = z
           "FRONTEND_BASE_URL must be set in production. It is used to build " +
           "password-reset and invitation links in outbound emails. " +
           "Example: https://app.fieldtrack.com",
+      });
+    }
+
+    // 8. WORKERS_ENABLED must be explicitly true in production.
+    //    Production always has Redis provisioned; a mis-configured production
+    //    container that skips workers silently would be a serious oversight.
+    if (isProd && !data.WORKERS_ENABLED) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["WORKERS_ENABLED"],
+        message:
+          "WORKERS_ENABLED must be set to true in production. " +
+          "Background workers and Redis-backed rate limiting require Redis, " +
+          "which is always provisioned in production. Set WORKERS_ENABLED=true.",
       });
     }
   });
@@ -563,7 +594,6 @@ export type PublicEnvConfig = ReturnType<typeof getPublicEnv>;
 export function getPrivateEnv() {
   return {
     SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
-    SUPABASE_JWT_SECRET:       env.SUPABASE_JWT_SECRET,
     METRICS_SCRAPE_TOKEN:      env.METRICS_SCRAPE_TOKEN,
     REDIS_URL:                 env.REDIS_URL,
   } as const;
@@ -629,7 +659,6 @@ interface MinimalLogger {
  *
  * What it deliberately omits (secrets):
  *   - SUPABASE_SERVICE_ROLE_KEY
- *   - SUPABASE_JWT_SECRET
  *   - METRICS_SCRAPE_TOKEN
  *   - REDIS_URL  (may contain a password in the connection string)
  *   - SUPABASE_ANON_KEY / SUPABASE_URL (not needed for deployment verification)

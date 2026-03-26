@@ -2,9 +2,9 @@
  * Role-escalation prevention integration tests.
  *
  * Verifies the C1 security fix: the authentication middleware reads the
- * application role from `app_metadata.role` (server-controlled, written by the
- * custom_access_token_hook) and NOT from `user_metadata.role` (user-editable
- * via supabase.auth.updateUser()).
+ * application role from the top-level `role` JWT claim (server-controlled,
+ * injected by the custom_access_token_hook) and NOT from `user_metadata.role`
+ * (user-editable via supabase.auth.updateUser()).
  *
  * Without this fix an EMPLOYEE could call:
  *   await supabase.auth.updateUser({ data: { role: "ADMIN" } })
@@ -43,8 +43,8 @@ vi.mock("../../../src/config/redis.js", () => ({
   redisClient: { on: vi.fn(), quit: vi.fn(), disconnect: vi.fn() },
 }));
 
-// Prevent Supabase DB calls (the test payloads always embed organization_id in
-// app_metadata so the DB lookup path is never taken)
+// Prevent Supabase DB calls (the test payloads always embed org_id directly in
+// the top-level JWT claims so the DB lookup path is never taken)
 vi.mock("../../../src/config/supabase.js", () => ({
   supabaseServiceClient: {
     from: vi.fn().mockReturnThis(),
@@ -136,7 +136,7 @@ async function buildProductionModeApp(): Promise<FastifyInstance> {
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
-/** Builds a Supabase-shaped JWT payload with both metadata claims. */
+/** Builds a Supabase-shaped JWT payload with top-level hook claims and user_metadata. */
 function makePayload(opts: {
   sub: string;
   appRole: string;
@@ -147,11 +147,9 @@ function makePayload(opts: {
     sub: opts.sub,
     email: "test@example.com",
     aud: "authenticated",
-    app_metadata: {
-      role: opts.appRole,
-      organization_id: opts.orgId ?? TEST_ORG_ID,
-      employee_id: opts.sub,
-    },
+    role: opts.appRole,                      // top-level — injected by custom_access_token_hook
+    org_id: opts.orgId ?? TEST_ORG_ID,       // top-level — injected by hook
+    employee_id: opts.sub,                   // top-level — injected by hook (EMPLOYEE role)
     user_metadata: {
       role: opts.userMetaRole, // user-controlled, must never drive authorization
     },
@@ -173,7 +171,7 @@ describe("Role escalation prevention (C1 fix)", () => {
 
   // ── Core escalation scenario ──────────────────────────────────────────────
 
-  it("denies admin route when app_metadata.role=EMPLOYEE, regardless of user_metadata.role=ADMIN", async () => {
+  it("denies admin route when JWT role=EMPLOYEE, regardless of user_metadata.role=ADMIN", async () => {
     vi.mocked(verifySupabaseToken).mockResolvedValueOnce(
       makePayload({
         sub: PROD_TEST_EMPLOYEE_ID,
@@ -191,7 +189,7 @@ describe("Role escalation prevention (C1 fix)", () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it("grants employee route when app_metadata.role=EMPLOYEE, even if user_metadata.role=ADMIN", async () => {
+  it("grants employee route when JWT role=EMPLOYEE, even if user_metadata.role=ADMIN", async () => {
     vi.mocked(verifySupabaseToken).mockResolvedValueOnce(
       makePayload({
         sub: PROD_TEST_EMPLOYEE_ID,
@@ -211,7 +209,7 @@ describe("Role escalation prevention (C1 fix)", () => {
 
   // ── Legitimate ADMIN token ────────────────────────────────────────────────
 
-  it("grants admin route when app_metadata.role=ADMIN and user_metadata.role=ADMIN", async () => {
+  it("grants admin route when JWT role=ADMIN and user_metadata.role=ADMIN", async () => {
     vi.mocked(verifySupabaseToken).mockResolvedValueOnce(
       makePayload({
         sub: PROD_TEST_ADMIN_ID,
@@ -249,17 +247,15 @@ describe("Role escalation prevention (C1 fix)", () => {
     expect(res.statusCode).toBe(200);
   });
 
-  // ── Missing app_metadata.role ─────────────────────────────────────────────
+  // ── Missing top-level role ────────────────────────────────────────────────
 
-  it("rejects when app_metadata.role is absent (hook not yet run for this token)", async () => {
+  it("rejects when top-level role claim is absent (hook not enabled for this token)", async () => {
     vi.mocked(verifySupabaseToken).mockResolvedValueOnce({
       sub: PROD_TEST_EMPLOYEE_ID,
       email: "test@example.com",
       aud: "authenticated",
-      app_metadata: {
-        organization_id: TEST_ORG_ID,
-        // role intentionally omitted — simulates a legacy token minted before hook deployed
-      },
+      org_id: TEST_ORG_ID,
+      // role intentionally omitted — simulates a legacy token minted before hook deployed
       user_metadata: { role: "EMPLOYEE" },
     });
 
@@ -274,10 +270,10 @@ describe("Role escalation prevention (C1 fix)", () => {
 
   // ── Downgrade attempt: ADMIN tries to masquerade as EMPLOYEE ─────────────
 
-  it("denies employee route when app_metadata.role=ADMIN but user_metadata.role=EMPLOYEE", async () => {
+  it("denies employee route when JWT role=ADMIN but user_metadata.role=EMPLOYEE", async () => {
     // An admin whose user_metadata.role was set to "EMPLOYEE" (e.g. support clearing a flag)
     // should still only get admin access — the employee route requires role=EMPLOYEE.
-    // This tests that app_metadata is read and requireRole("EMPLOYEE") fires for ADMINs.
+    // This tests that the top-level JWT role is read and requireRole("EMPLOYEE") fires for ADMINs.
     vi.mocked(verifySupabaseToken).mockResolvedValueOnce(
       makePayload({
         sub: PROD_TEST_ADMIN_ID,

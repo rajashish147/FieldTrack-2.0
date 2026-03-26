@@ -27,11 +27,14 @@
 import fp from "fastify-plugin";
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import fastifyRateLimit from "@fastify/rate-limit";
+import { shouldStartWorkers } from "../../workers/startup.js";
 
 const rateLimitPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
-    // Skip rate limiting in CI mode when Redis is unavailable
-    if (process.env.SKIP_EXTERNAL_SERVICES === "true") {
-        fastify.log.info("security-rate-limit plugin SKIPPED (SKIP_EXTERNAL_SERVICES=true)");
+    // Rate limiting requires Redis. Skip when workers/Redis are not provisioned
+    // (CI, local dev without Redis). In production, WORKERS_ENABLED=true so
+    // this check always passes and rate limiting is enforced.
+    if (!shouldStartWorkers()) {
+        fastify.log.info("security-rate-limit plugin SKIPPED (WORKERS_ENABLED=false — Redis not provisioned)");
         return;
     }
 
