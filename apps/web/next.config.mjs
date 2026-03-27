@@ -1,22 +1,34 @@
 /** @type {import('next').NextConfig} */
 
-// NEXT_PUBLIC_API_BASE_URL is the single source of truth for the backend API location.
+// NEXT_PUBLIC_API_BASE_URL controls how the browser reaches the backend.
 //
-// Valid values:
-//   Full URL  → https://api.example.com
-//               Browser calls the API directly; the /api/proxy rewrite is also
-//               available for convenience or same-origin setups.
-//   Path      → /api/proxy
-//               Browser routes requests through Next.js's server-side proxy.
-//               Used in CI placeholder builds or self-hosted setups.
-//               Rewrite is skipped when the value is a relative path to prevent
-//               an infinite routing loop (/api/proxy → /api/proxy → …).
-const NEXT_PUBLIC_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
-const apiIsFullUrl = /^https?:\/\//.test(NEXT_PUBLIC_API_BASE_URL);
+// Mode A — Direct (recommended for Vercel):
+//   NEXT_PUBLIC_API_BASE_URL=https://api.getfieldtrack.app
+//   Browser calls the API directly; no server-side proxy is involved.
+//
+// Mode B — Server-side proxy (avoids CORS, hides API origin from browser):
+//   NEXT_PUBLIC_API_BASE_URL=/api/proxy
+//   API_DESTINATION_URL=https://api.getfieldtrack.app   ← server-only, never baked into JS
+//   Browser calls /api/proxy/:path*, Next.js rewrites to API_DESTINATION_URL/:path*.
+//   API_DESTINATION_URL MUST be set when using proxy mode or the rewrite has no destination.
+//
+// CI placeholder builds may use NEXT_PUBLIC_API_BASE_URL=/api/proxy without
+// API_DESTINATION_URL — this is fine because no real requests are made during `next build`.
 
-// Extract scheme+host only (strip any path) for use in CSP and rewrite destination.
-// Empty string when the env var is a relative path — 'self' in CSP covers same-origin.
-const apiOrigin = apiIsFullUrl ? new URL(NEXT_PUBLIC_API_BASE_URL).origin : "";
+const NEXT_PUBLIC_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+const API_DESTINATION_URL = process.env.API_DESTINATION_URL ?? "";
+
+const apiIsFullUrl = /^https?:\/\//.test(NEXT_PUBLIC_API_BASE_URL);
+const destinationIsFullUrl = /^https?:\/\//.test(API_DESTINATION_URL);
+
+// In direct mode, extract the origin from NEXT_PUBLIC_API_BASE_URL.
+// In proxy mode, extract it from API_DESTINATION_URL (server-only var).
+// Used for CSP and as the rewrite destination.
+const apiOrigin = apiIsFullUrl
+  ? new URL(NEXT_PUBLIC_API_BASE_URL).origin
+  : destinationIsFullUrl
+    ? new URL(API_DESTINATION_URL).origin
+    : "";
 
 const nextConfig = {
   transpilePackages: ["mapbox-gl", "@fieldtrack/types"],
@@ -38,6 +50,8 @@ const nextConfig = {
     ];
     // Only add the API origin when it is a full URL — same-origin requests
     // (/api/proxy path) are already covered by 'self' above.
+    // In proxy mode, apiOrigin is derived from API_DESTINATION_URL (server-only) so
+    // it is NOT embedded in the client bundle, but it IS the rewrite destination.
     if (apiOrigin) {
       connectSources.push(apiOrigin);
     }
@@ -70,9 +84,20 @@ const nextConfig = {
     ];
   },
   async rewrites() {
-    // Configure the server-side proxy only when NEXT_PUBLIC_API_BASE_URL is a full URL.
-    // Skipping for relative paths avoids an infinite routing loop.
-    if (!apiIsFullUrl) return [];
+    // The /api/proxy rewrite forwards browser requests to the real backend.
+    //
+    // In direct mode (NEXT_PUBLIC_API_BASE_URL = full URL):
+    //   apiOrigin is derived from that URL — rewrite is available as a convenience
+    //   but the client calls the API directly and never hits /api/proxy.
+    //
+    // In proxy mode (NEXT_PUBLIC_API_BASE_URL = /api/proxy):
+    //   apiOrigin is derived from API_DESTINATION_URL — the rewrite is REQUIRED
+    //   because the browser sends every request to /api/proxy/:path*.
+    //   Without it, Next.js returns a 404 HTML page and all JSON parsing fails.
+    //
+    // When no destination is resolvable (e.g. CI placeholder builds) the rewrite
+    // is skipped — this is safe because no real requests are made during `next build`.
+    if (!apiOrigin) return [];
     return [
       {
         source: "/api/proxy/:path*",

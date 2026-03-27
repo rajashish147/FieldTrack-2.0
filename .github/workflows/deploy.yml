@@ -150,6 +150,14 @@ jobs:
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
       NEXT_PUBLIC_MAPBOX_TOKEN: pk.ci-build-placeholder
     steps:
+      - name: Verify NEXT_PUBLIC_API_BASE_URL is set
+        run: |
+          if [ -z "$NEXT_PUBLIC_API_BASE_URL" ]; then
+            echo "::error::NEXT_PUBLIC_API_BASE_URL is not set. Add it to the job env block."
+            exit 1
+          fi
+          echo "NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}"
+
       - name: Checkout
         uses: actions/checkout@v5
 

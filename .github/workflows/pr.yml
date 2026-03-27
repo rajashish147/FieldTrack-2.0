@@ -140,6 +140,14 @@ jobs:
           echo "❌ Change detection did not succeed (result: ${{ needs.detect-changes.result }}) — cannot safely skip checks"
           exit 1
 
+      - name: Verify NEXT_PUBLIC_API_BASE_URL is set
+        run: |
+          if [ -z "$NEXT_PUBLIC_API_BASE_URL" ]; then
+            echo "::error::NEXT_PUBLIC_API_BASE_URL is not set. Add it to the job env block."
+            exit 1
+          fi
+          echo "NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}"
+
       - name: Skip if no frontend changes
         if: needs.detect-changes.outputs.frontend != 'true'
         run: |

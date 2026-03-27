@@ -108,13 +108,51 @@ async function retryableFetch(
   throw lastError;
 }
 
+async function parseJsonOrThrow(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    return response.text().then((text) => {
+      console.error("[FieldTrack API] Non-JSON response", {
+        url: response.url,
+        status: response.status,
+        contentType,
+        preview: text.slice(0, 400),
+      });
+      throw new ApiError(
+        `API Error: Expected JSON but received "${contentType}" (HTTP ${response.status}). ` +
+        `Check NEXT_PUBLIC_API_BASE_URL or proxy config.`,
+        response.status
+      );
+    });
+  }
+  return response.json();
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (response.status === 401) {
     await handleAuthFailure();
     throw new ApiError("Unauthorized. Please log in again.", 401);
   }
 
-  const json = (await response.json()) as ApiResponse<T>;
+  // For any non-2xx response whose body is NOT JSON (e.g. an HTML 502 from a
+  // load balancer or CDN), surface a clean error immediately instead of
+  // letting parseJsonOrThrow emit the confusing “Expected JSON” message.
+  // JSON error bodies (e.g. 400/422 with { success: false, error: "..." })
+  // fall through and are handled by the json.success check below.
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) {
+      const text = await response.text();
+      console.error("[FieldTrack API] Non-JSON error response", {
+        url: response.url,
+        status: response.status,
+        preview: text.slice(0, 200),
+      });
+      throw new ApiError(`HTTP ${response.status} error from API`, response.status);
+    }
+  }
+
+  const json = (await parseJsonOrThrow(response)) as ApiResponse<T>;
 
   if (!json.success) {
     throw new ApiError(json.error, response.status, json.requestId);
@@ -131,7 +169,20 @@ async function handlePaginatedResponse<T>(
     throw new ApiError("Unauthorized. Please log in again.", 401);
   }
 
-  const json = (await response.json()) as Record<string, unknown>;
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) {
+      const text = await response.text();
+      console.error("[FieldTrack API] Non-JSON error response", {
+        url: response.url,
+        status: response.status,
+        preview: text.slice(0, 200),
+      });
+      throw new ApiError(`HTTP ${response.status} error from API`, response.status);
+    }
+  }
+
+  const json = (await parseJsonOrThrow(response)) as Record<string, unknown>;
 
   if (!json["success"]) {
     const error = (json["error"] as string) ?? "Unknown error";
@@ -159,6 +210,12 @@ export async function apiGet<T>(
   path: string,
   params?: Record<string, string>
 ): Promise<T> {
+  if (!env.NEXT_PUBLIC_API_BASE_URL) {
+    throw new ApiError(
+      "NEXT_PUBLIC_API_BASE_URL is not set. Set it to the backend API URL (e.g. https://api.getfieldtrack.app) in your Vercel project settings.",
+      500
+    );
+  }
   const headers = await getAuthHeaders();
   const qs = params && Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : "";
   const response = await retryableFetch(`${env.NEXT_PUBLIC_API_BASE_URL}${path}${qs}`, {
@@ -173,6 +230,12 @@ export async function apiGetPaginated<T>(
   path: string,
   params?: Record<string, string>
 ): Promise<PaginatedResponse<T>> {
+  if (!env.NEXT_PUBLIC_API_BASE_URL) {
+    throw new ApiError(
+      "NEXT_PUBLIC_API_BASE_URL is not set. Set it to the backend API URL (e.g. https://api.getfieldtrack.app) in your Vercel project settings.",
+      500
+    );
+  }
   const headers = await getAuthHeaders();
   const qs = params && Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : "";
   const response = await retryableFetch(`${env.NEXT_PUBLIC_API_BASE_URL}${path}${qs}`, {
@@ -184,6 +247,12 @@ export async function apiGetPaginated<T>(
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  if (!env.NEXT_PUBLIC_API_BASE_URL) {
+    throw new ApiError(
+      "NEXT_PUBLIC_API_BASE_URL is not set. Set it to the backend API URL (e.g. https://api.getfieldtrack.app) in your Vercel project settings.",
+      500
+    );
+  }
   const headers = await getAuthHeaders();
 
   const response = await fetchWithTimeout(`${env.NEXT_PUBLIC_API_BASE_URL}${path}`, {
@@ -196,6 +265,12 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  if (!env.NEXT_PUBLIC_API_BASE_URL) {
+    throw new ApiError(
+      "NEXT_PUBLIC_API_BASE_URL is not set. Set it to the backend API URL (e.g. https://api.getfieldtrack.app) in your Vercel project settings.",
+      500
+    );
+  }
   const headers = await getAuthHeaders();
 
   const response = await fetchWithTimeout(`${env.NEXT_PUBLIC_API_BASE_URL}${path}`, {
