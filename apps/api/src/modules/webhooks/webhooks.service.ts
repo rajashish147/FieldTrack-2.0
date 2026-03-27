@@ -14,10 +14,7 @@ import type { FastifyRequest } from "fastify";
 import { webhooksRepository } from "./webhooks.repository.js";
 import { validateWebhookUrl, InvalidWebhookUrlError } from "../../utils/url-validator.js";
 import { BadRequestError, NotFoundError } from "../../utils/errors.js";
-import {
-  enqueueWebhookDelivery,
-  WEBHOOK_MAX_ATTEMPTS,
-} from "../../workers/webhook.queue.js";
+import { enqueueWebhookDelivery } from "../../workers/webhook.queue.js";
 import type {
   CreateWebhookBody,
   UpdateWebhookBody,

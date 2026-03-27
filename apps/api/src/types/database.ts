@@ -629,7 +629,8 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }      webhook_deliveries: {
+      }
+      webhook_deliveries: {
         Row: {
           id: string
           webhook_id: string
