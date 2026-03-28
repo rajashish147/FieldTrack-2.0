@@ -16,10 +16,14 @@ import type {
   WebhookPublic,
   WebhookDelivery,
   DeliveryListQuery,
+  DlqListQuery,
+  WebhookDlqDelivery,
 } from "./webhooks.schema.js";
 
 const WEBHOOK_DELIVERY_COLUMNS =
   "id, webhook_id, event_id, organization_id, status, attempt_count, response_status, response_body, last_attempt_at, next_retry_at, created_at";
+const WEBHOOK_DLQ_COLUMNS =
+  "id, webhook_id, organization_id, event_id, event_type, payload, status, attempt_count, response_status, response_body, last_error, next_retry_at, last_attempt_at, created_at";
 
 // ─── Webhook CRUD ─────────────────────────────────────────────────────────────
 
@@ -131,6 +135,72 @@ export const webhooksRepository = {
 
     if (error) throw new Error(`Failed to list deliveries: ${error.message}`);
     return { data: (data ?? []) as WebhookDelivery[], total: count ?? 0 };
+  },
+
+  /**
+   * Paginated list of failed delivery rows for the admin DLQ view.
+   *
+   * Uses `last_attempt_at` consistently in both DB query and API response.
+   */
+  async listDlqDeliveries(
+    request: FastifyRequest,
+    query: DlqListQuery,
+  ): Promise<{ data: WebhookDlqDelivery[]; total: number }> {
+    const from = query.offset;
+    const to = query.offset + query.limit - 1;
+
+    let q = orgTable(request, "webhook_deliveries")
+      .select(WEBHOOK_DLQ_COLUMNS, { count: "exact" })
+      .eq("status", "failed")
+      .order("last_attempt_at", { ascending: false, nullsFirst: false })
+      .range(from, to);
+
+    if (query.webhook_id) {
+      q = (q as ReturnType<typeof q.eq>).eq("webhook_id", query.webhook_id);
+    }
+    if (query.event_type) {
+      q = (q as ReturnType<typeof q.eq>).eq("event_type", query.event_type);
+    }
+
+    const { data, error, count } = await q;
+    if (error) throw new Error(`Failed to list webhook DLQ deliveries: ${error.message}`);
+
+    const rows = (data ?? []) as Array<{
+      id: string;
+      webhook_id: string;
+      organization_id: string;
+      event_id: string;
+      event_type: string | null;
+      payload: unknown | null;
+      status: "failed";
+      attempt_count: number;
+      response_status: number | null;
+      response_body: string | null;
+      last_error: string | null;
+      next_retry_at: string | null;
+      last_attempt_at: string | null;
+      created_at: string;
+    }>;
+
+    return {
+      data: rows.map((row) => ({
+        id: row.id,
+        webhook_id: row.webhook_id,
+        organization_id: row.organization_id,
+        event_id: row.event_id,
+        event_type: row.event_type,
+        payload: row.payload,
+        status: row.status,
+        attempts: row.attempt_count,
+        response_status: row.response_status,
+        response_body: row.response_body,
+        last_error: row.last_error,
+        next_retry_at: row.next_retry_at,
+        last_attempt_at: row.last_attempt_at,
+        created_at: row.created_at,
+      })),
+      total: count ?? 0,
+    };
   },
 
   /** Fetch a single delivery row by id. */

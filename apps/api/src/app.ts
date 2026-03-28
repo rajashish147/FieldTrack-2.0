@@ -195,11 +195,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     const { adminQueuesRoutes } = await import("./modules/admin/queues.routes.js");
     const { adminRetryIntentsRoutes } = await import("./modules/admin/retry-intents.routes.js");
     const { systemHealthRoutes } = await import("./modules/admin/system-health.routes.js");
-    const { webhookDlqRoutes } = await import("./modules/admin/webhook-dlq.routes.js");
     await app.register(adminQueuesRoutes);
     await app.register(adminRetryIntentsRoutes);
     await app.register(systemHealthRoutes);
-    await app.register(webhookDlqRoutes);
   }
 
   // Admin audit log — not worker-gated (pure DB, no Redis required).

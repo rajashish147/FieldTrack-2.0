@@ -90,6 +90,25 @@ export const webhookDeliverySchema = z.object({
 });
 export type WebhookDelivery = z.infer<typeof webhookDeliverySchema>;
 
+export const webhookDlqDeliverySchema = z.object({
+  id:              z.string().uuid(),
+  webhook_id:      z.string().uuid(),
+  organization_id: z.string().uuid(),
+  event_id:        z.string().uuid(),
+  event_type:      z.string().nullable(),
+  payload:         z.unknown().nullable(),
+  status:          z.literal("failed"),
+  attempts:        z.number(),
+  response_status: z.number().nullable(),
+  response_body:   z.string().nullable(),
+  last_error:      z.string().nullable(),
+  next_retry_at:   z.string().nullable(),
+  // DB and API use the same timestamp name to avoid semantic drift.
+  last_attempt_at: z.string().nullable(),
+  created_at:      z.string(),
+});
+export type WebhookDlqDelivery = z.infer<typeof webhookDlqDeliverySchema>;
+
 // ─── Query params ──────────────────────────────────────────────────────────────
 
 export const deliveryListQuerySchema = z.object({
@@ -99,3 +118,11 @@ export const deliveryListQuerySchema = z.object({
   status:     z.enum(["pending", "success", "failed"]).optional(),
 });
 export type DeliveryListQuery = z.infer<typeof deliveryListQuerySchema>;
+
+export const dlqListQuerySchema = z.object({
+  limit:      z.coerce.number().int().min(1).max(100).default(50),
+  offset:     z.coerce.number().int().min(0).default(0),
+  event_type: z.string().min(1).optional(),
+  webhook_id: z.string().uuid().optional(),
+});
+export type DlqListQuery = z.infer<typeof dlqListQuerySchema>;

@@ -22,6 +22,8 @@ import type {
   WebhookPublic,
   WebhookDelivery,
   DeliveryListQuery,
+  DlqListQuery,
+  WebhookDlqDelivery,
 } from "./webhooks.schema.js";
 
 export const webhooksService = {
@@ -85,6 +87,13 @@ export const webhooksService = {
     query: DeliveryListQuery,
   ): Promise<{ data: WebhookDelivery[]; total: number }> {
     return webhooksRepository.listDeliveries(request, query);
+  },
+
+  async listDlqDeliveries(
+    request: FastifyRequest,
+    query: DlqListQuery,
+  ): Promise<{ data: WebhookDlqDelivery[]; total: number }> {
+    return webhooksRepository.listDlqDeliveries(request, query);
   },
 
   /**

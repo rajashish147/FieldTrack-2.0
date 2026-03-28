@@ -13,6 +13,7 @@ import { dashboardRoutes } from "../modules/dashboard/dashboard.routes.js";
 import { profileRoutes } from "../modules/profile/profile.routes.js";
 import { adminDashboardRoutes } from "../modules/admin/dashboard.routes.js";
 import { adminMapRoutes } from "../modules/admin/map.routes.js";
+import { webhookDlqRoutes } from "../modules/admin/webhook-dlq.routes.js";
 import { eventsRoutes } from "./events.routes.js";
 import { webhooksRoutes } from "../modules/webhooks/webhooks.routes.js";
 
@@ -31,6 +32,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(profileRoutes);
   await app.register(adminDashboardRoutes);
   await app.register(adminMapRoutes);
+  await app.register(webhookDlqRoutes);
   await app.register(eventsRoutes);
   await app.register(webhooksRoutes);
 }

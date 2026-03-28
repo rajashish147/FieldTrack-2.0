@@ -55,6 +55,7 @@ vi.mock("../../../src/modules/webhooks/webhooks.repository.js", () => ({
     update:                vi.fn(),
     delete:                vi.fn(),
     listDeliveries:        vi.fn(),
+    listDlqDeliveries:     vi.fn(),
     findDeliveryById:      vi.fn(),
     findWebhookSecretById: vi.fn(),
     resetDeliveryForRetry: vi.fn(),
@@ -86,7 +87,9 @@ import {
   buildTestApp,
   signAdminToken,
   signEmployeeToken,
+  TEST_ADMIN_ID,
   TEST_ORG_ID,
+  TEST_ORG_ID_B,
 } from "../../setup/test-server.js";
 import { webhooksRepository } from "../../../src/modules/webhooks/webhooks.repository.js";
 
@@ -121,16 +124,35 @@ const deliveryRow = {
   created_at:       now,
 };
 
+const dlqDeliveryRow = {
+  id:               DELIVERY_ID,
+  webhook_id:       WEBHOOK_ID,
+  organization_id:  TEST_ORG_ID,
+  event_id:         EVENT_ID,
+  event_type:       "expense.created",
+  payload:          { type: "expense.created", amount: 123.45 },
+  status:           "failed" as const,
+  attempts:         3,
+  response_status:  500,
+  response_body:    "Internal Server Error",
+  last_error:       "Receiver returned 500",
+  next_retry_at:    null,
+  last_attempt_at:  now,
+  created_at:       now,
+};
+
 // ─── Test suite ───────────────────────────────────────────────────────────────
 
 describe("Webhooks Admin API", () => {
   let app: FastifyInstance;
   let adminToken: string;
+  let adminTokenOrgB: string;
   let employeeToken: string;
 
   beforeAll(async () => {
     app = await buildTestApp();
     adminToken    = signAdminToken(app);
+    adminTokenOrgB = signAdminToken(app, TEST_ADMIN_ID, TEST_ORG_ID_B);
     employeeToken = signEmployeeToken(app);
   });
 
@@ -401,6 +423,121 @@ describe("Webhooks Admin API", () => {
       const res = await app.inject({
         method: "GET",
         url:    "/admin/webhook-deliveries",
+      });
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  // ─── GET /admin/webhook-dlq ────────────────────────────────────────────────
+
+  describe("GET /admin/webhook-dlq", () => {
+    it("returns failed deliveries for ADMIN", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.mocked((webhooksRepository as any).listDlqDeliveries).mockResolvedValueOnce({
+        data: [dlqDeliveryRow],
+        total: 1,
+      });
+
+      const res = await app.inject({
+        method:  "GET",
+        url:     "/admin/webhook-dlq?limit=50&offset=0",
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json<{
+        success: boolean;
+        data: typeof dlqDeliveryRow[];
+        meta: { limit: number; offset: number; count: number };
+      }>();
+      expect(body.success).toBe(true);
+      expect(body.data).toHaveLength(1);
+      expect(body.data[0].status).toBe("failed");
+      expect(body.meta).toEqual({ limit: 50, offset: 0, count: 1 });
+    });
+
+    it("accepts event_type and webhook_id filters", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.mocked((webhooksRepository as any).listDlqDeliveries).mockResolvedValueOnce({
+        data: [],
+        total: 0,
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/admin/webhook-dlq?event_type=expense.created&webhook_id=${WEBHOOK_ID}`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+    });
+
+    it("returns 403 for EMPLOYEE role", async () => {
+      const res = await app.inject({
+        method:  "GET",
+        url:     "/admin/webhook-dlq",
+        headers: { authorization: `Bearer ${employeeToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("returns 401 with no token", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/admin/webhook-dlq",
+      });
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  // ─── POST /admin/webhook-dlq/:id/retry ─────────────────────────────────────
+
+  describe("POST /admin/webhook-dlq/:id/retry", () => {
+    it("retries a failed DLQ delivery", async () => {
+      const { enqueueWebhookDelivery } = await import(
+        "../../../src/workers/webhook.queue.js"
+      );
+
+      const webhookWithSecret = {
+        id: WEBHOOK_ID,
+        url: "https://example.com/hook",
+        secret: "s3cr3t_value_long_enough",
+      };
+      const updatedDelivery = { ...deliveryRow, status: "pending" as const };
+
+      vi.mocked(webhooksRepository.findDeliveryById).mockResolvedValueOnce(deliveryRow);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.mocked((webhooksRepository as any).findWebhookSecretById).mockResolvedValueOnce(webhookWithSecret);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.mocked((webhooksRepository as any).resetDeliveryForRetry).mockResolvedValueOnce(updatedDelivery);
+
+      const res = await app.inject({
+        method:  "POST",
+        url:     `/admin/webhook-dlq/${DELIVERY_ID}/retry`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(vi.mocked(enqueueWebhookDelivery)).toHaveBeenCalledOnce();
+    });
+
+    it("returns 404 for admin from another organization", async () => {
+      // Org-scoped lookup should return null for cross-org delivery ids.
+      vi.mocked(webhooksRepository.findDeliveryById).mockResolvedValueOnce(null);
+
+      const res = await app.inject({
+        method:  "POST",
+        url:     `/admin/webhook-dlq/${DELIVERY_ID}/retry`,
+        headers: { authorization: `Bearer ${adminTokenOrgB}` },
+      });
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it("returns 401 with no token", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: `/admin/webhook-dlq/${DELIVERY_ID}/retry`,
       });
       expect(res.statusCode).toBe(401);
     });

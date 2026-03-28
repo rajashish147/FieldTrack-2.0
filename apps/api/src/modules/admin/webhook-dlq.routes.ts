@@ -1,35 +1,44 @@
 /**
- * webhook-dlq.routes.ts — Admin API for Dead-Letter Queue (DLQ) management.
+ * webhook-dlq.routes.ts — Admin API for failed webhook deliveries.
  *
- * GET  /admin/webhook-dlq            — list DLQ jobs pending review
- * POST /admin/webhook-dlq/:id/replay — replay a single DLQ job (reset attempt_count)
+ * GET  /admin/webhook-dlq         — list failed webhook deliveries for this org
+ * POST /admin/webhook-dlq/:id/retry — retry a failed delivery
  *
- * All routes require ADMIN role (JWT + RBAC).
- * Only available when WORKERS_ENABLED=true (registered from app.ts).
- *
- * Replay semantics:
- *  - Removes the job from the DLQ
- *  - Re-enqueues into the main webhook-delivery queue with attempt_number=1
- *  - Resets attempt_count in DB to allow full retry schedule
- *  - Logs a structured audit entry on every replay
+ * This route is DB-backed off `public.webhook_deliveries`, not the in-memory
+ * BullMQ DLQ queue. It is always registered so unauthenticated callers receive
+ * 401 instead of 404 even when workers are disabled.
  */
 
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
-import {
-  replayWebhookDlqJob,
-  listWebhookDlqJobs,
-  getWebhookDlqDepth,
-} from "../../workers/webhook.queue.js";
-import { supabaseServiceClient as supabase } from "../../config/supabase.js";
-import { NotFoundError } from "../../utils/errors.js";
+import { webhooksService } from "../webhooks/webhooks.service.js";
 import { handleError } from "../../utils/response.js";
-import { insertAuditRecord } from "../../utils/audit.js";
+import {
+  dlqListQuerySchema,
+  webhookDlqDeliverySchema,
+} from "../webhooks/webhooks.schema.js";
 
-const DLQ_REPLAY_COOLDOWN_MS = 5_000;
-let lastDlqReplayAt = 0;
+const dlqListResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.array(webhookDlqDeliverySchema),
+  meta: z.object({
+    limit: z.number().int(),
+    offset: z.number().int(),
+    count: z.number().int(),
+  }),
+});
+
+const dlqRetryResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    id: z.string().uuid(),
+    status: z.string(),
+    attempt_count: z.number(),
+    next_retry_at: z.string().nullable(),
+  }),
+});
 
 export async function webhookDlqRoutes(app: FastifyInstance): Promise<void> {
   // ── GET /admin/webhook-dlq ─────────────────────────────────────────────────
@@ -38,108 +47,59 @@ export async function webhookDlqRoutes(app: FastifyInstance): Promise<void> {
     {
       schema: {
         tags: ["admin", "webhooks"],
-        description: "List jobs in the webhook Dead-Letter Queue (ADMIN only).",
-        querystring: z.object({
-          limit: z.coerce.number().int().min(1).max(100).default(50),
-        }),
+        description: "List failed webhook deliveries for this organization (ADMIN only).",
+        querystring: dlqListQuerySchema,
+        response: { 200: dlqListResponseSchema },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
     async (request, reply) => {
       try {
-        const { limit } = request.query as { limit: number };
-        const [jobs, depth] = await Promise.all([
-          listWebhookDlqJobs(limit),
-          getWebhookDlqDepth(),
-        ]);
+        const query = dlqListQuerySchema.parse(request.query);
+        const { data, total } = await webhooksService.listDlqDeliveries(request, query);
         reply.status(200).send({
           success: true,
-          dlq_depth: depth,
-          jobs,
+          data,
+          meta: {
+            limit: query.limit,
+            offset: query.offset,
+            count: total,
+          },
         });
       } catch (error) {
-        handleError(error, request, reply, "Failed to list DLQ jobs");
+        handleError(error, request, reply, "Failed to list DLQ deliveries");
       }
     },
   );
 
-  // ── POST /admin/webhook-dlq/:id/replay ────────────────────────────────────
+  // ── POST /admin/webhook-dlq/:id/retry ─────────────────────────────────────
   app.post<{ Params: { id: string } }>(
-    "/admin/webhook-dlq/:id/replay",
+    "/admin/webhook-dlq/:id/retry",
     {
       schema: {
         tags: ["admin", "webhooks"],
-        description: "Replay a DLQ job: re-enqueue with attempt_count reset (ADMIN only).",
+        description: "Retry a failed webhook delivery (ADMIN only).",
         params: z.object({ id: z.string().uuid() }),
+        response: { 200: dlqRetryResponseSchema },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },
     async (request, reply) => {
       try {
         const { id: deliveryId } = request.params;
-        const adminId = (request as { user?: { sub?: string } }).user?.sub;
-        const orgId   = (request as { organizationId?: string }).organizationId;
-
-        // Per-admin replay cooldown — prevents accidental mass re-delivery
-        const now = Date.now();
-        const elapsed = now - lastDlqReplayAt;
-        if (elapsed < DLQ_REPLAY_COOLDOWN_MS) {
-          reply.status(429).send({
-            success: false,
-            error: `DLQ replay rate-limited. Retry in ${DLQ_REPLAY_COOLDOWN_MS - elapsed}ms.`,
-          });
-          return;
-        }
-        lastDlqReplayAt = now;
-
-        const replayed = await replayWebhookDlqJob(deliveryId);
-        if (!replayed) {
-          throw new NotFoundError(`DLQ job for delivery ${deliveryId} not found`);
-        }
-
-        // Reset attempt_count in DB so the full retry schedule applies
-        await supabase
-          .from("webhook_deliveries")
-          .update({
-            status:        "pending",
-            attempt_count:  0,
-            next_retry_at:  new Date().toISOString(),
-          })
-          .eq("id", deliveryId);
-
-        // Structured audit log — queryable in Grafana/Loki
-        request.log.info(
-          {
-            audit:      true,
-            event:      "WEBHOOK_DLQ_REPLAY",
-            deliveryId,
-            adminId,
-            organizationId: orgId,
-            timestamp:  new Date().toISOString(),
-          },
-          "webhook-dlq: DLQ job replayed by admin",
-        );
-
-        // Persist to DB audit trail for GET /admin/audit-log
-        await insertAuditRecord({
-          event:          "WEBHOOK_DLQ_REPLAY",
-          actor_id:       adminId,
-          organization_id: orgId,
-          resource_type:  "webhook_delivery",
-          resource_id:    deliveryId,
-          payload:        { replayed_at: new Date().toISOString() },
-        });
+        const delivery = await webhooksService.retryDelivery(request, deliveryId);
 
         reply.status(200).send({
           success: true,
           data: {
-            delivery_id: deliveryId,
-            replayed_at: new Date().toISOString(),
-            message: "Job re-queued with attempt_count reset",
+            id: delivery.id,
+            status: delivery.status,
+            attempt_count: delivery.attempt_count,
+            next_retry_at: delivery.next_retry_at,
           },
         });
       } catch (error) {
-        handleError(error, request, reply, "Failed to replay DLQ job");
+        handleError(error, request, reply, "Failed to retry DLQ delivery");
       }
     },
   );
