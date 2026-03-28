@@ -216,6 +216,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      security-events: write
     outputs:
       sha_short: ${{ steps.meta.outputs.sha_short }}
       digest:    ${{ steps.digest.outputs.digest }}
@@ -432,6 +433,28 @@ jobs:
           else
             echo "✓ No unfixed CRITICAL vulnerabilities"
           fi
+
+      - name: Generate Trivy scan results (SARIF for GitHub Security)
+        env:
+          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+        run: |
+          docker run --rm \
+            --network none \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /tmp/trivy-cache:/root/.cache \
+            -v "$(pwd):/workspace" \
+            aquasec/trivy@sha256:91494b87ddc64f62860d52997532643956c24eeee0d0dda317d563c28c8581bc image \
+              --skip-db-update \
+              --format sarif \
+              --output /workspace/trivy-results.sarif \
+              "$IMAGE_NAME"
+          echo "✓ SARIF results written to trivy-results.sarif"
+
+      - name: Upload Trivy scan results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: 'trivy-image-scan'
 
       # Phase 3: Scan passed — push the exact scanned image (same layer digests).
       # Uses docker tag + push rather than rebuilding to guarantee what was scanned
