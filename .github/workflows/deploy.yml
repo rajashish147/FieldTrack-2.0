@@ -253,19 +253,15 @@ jobs:
 
       # Verify Node.js runtime crypto via OpenSSL binding in PRODUCTION stage.
       # Confirms the Node runtime has OpenSSL linked (critical for TLS/HTTPS).
-      # Uses Node's built-in binding instead of CLI tool (distroless has no CLI tools).
+      # Uses --entrypoint to bypass the distroless ENTRYPOINT.
       - name: Verify Node.js runtime crypto
         run: |
           IMAGE_NAME="fieldtrack-backend:${{ steps.meta.outputs.sha_short }}"
           echo "Testing image: $IMAGE_NAME"
           
-          # First, verify the image exists and can start
-          echo "Checking if image is available..."
-          docker images "$IMAGE_NAME" || (echo "❌ Image not found"; exit 1)
-          
-          # Test Node.js and OpenSSL binding
-          echo "Verifying Node.js runtime..."
-          docker run --rm "$IMAGE_NAME" node -e "
+          # Override ENTRYPOINT to run node directly (distroless sets ENTRYPOINT ["/nodejs/bin/node"])
+          echo "Verifying Node.js OpenSSL binding..."
+          docker run --rm --entrypoint /nodejs/bin/node "$IMAGE_NAME" -e "
             const openssl = process.versions.openssl;
             if (!openssl) {
               console.error('ERROR: OpenSSL not linked to Node.js runtime');
