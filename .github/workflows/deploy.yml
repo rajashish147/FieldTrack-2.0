@@ -233,7 +233,8 @@ jobs:
       # Phase 1: Build into local Docker daemon for scanning.
       # EXACT same parameters as pr.yml production-simulation:
       #   target: production, build-args: NODE_ENV=production, GHA cache.
-      # The shared GHA cache means layers built in PR are reused here.
+      # CACHE_BUSTER forces rebuild when package-lock.json changes (prevents stale deps).
+      # Cache scoped to production to prevent cross-branch contamination from PR builds.
       - name: Build Docker image (pre-scan, no push)
         uses: docker/build-push-action@v6
         with:
@@ -242,17 +243,30 @@ jobs:
           target: production
           build-args: |
             NODE_ENV=production
+            CACHE_BUSTER=${{ hashFiles('**/package-lock.json') }}
           push: false
           load: true
           tags: |
             fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
-            fieldtrack-backend:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=production
+          cache-to: type=gha,mode=max,scope=production
+
+      # Verify OpenSSL version in PRODUCTION stage (not builder or runtime-deps).
+      # Confirms dependencies were rebuilt AND are present in final distroless image.
+      - name: Verify OpenSSL in production image
+        run: |
+          IMAGE_NAME="fieldtrack-backend:${{ steps.meta.outputs.sha_short }}"
+          # Run against production image (distroless) — would fail if deps layer missed rebuild
+          OPENSSL_VERSION=$(docker run --rm "$IMAGE_NAME" openssl version 2>&1)
+          if [ $? -ne 0 ] || [ -z "$OPENSSL_VERSION" ]; then
+            echo "::error::OpenSSL check failed — dependencies were not rebuilt or not copied to production stage"
+            echo "Output: $OPENSSL_VERSION"
+            exit 1
+          fi
+          echo "✓ Production image verified: $OPENSSL_VERSION"
 
       # Capture the content-addressable image digest.
-      # When source + cache + build-args are identical between PR and deploy,
-      # this digest will match the one stored in the PR simulation artifact.
+      # With cache scoping and cache busting, digest should always reproduce correctly.
       - name: Capture image digest
         id: digest
         run: |

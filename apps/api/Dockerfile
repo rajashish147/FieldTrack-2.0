@@ -15,7 +15,16 @@
 
 # ---- Stage 1: Build --------------------------------------------------------
 # Pinned to specific version to prevent supply chain attacks.
+# NOTE: To pin by digest and prevent base image drift:
+#   1. Run: docker pull node:24.2.0-bookworm-slim
+#   2. Run: docker inspect node:24.2.0-bookworm-slim | grep RepoDigests
+#   3. Replace node:24.2.0-bookworm-slim with node:24.2.0-bookworm-slim@sha256:DIGEST
+# This ensures identical binaries even if the tag is re-released.
 FROM node:24.2.0-bookworm-slim AS builder
+
+# Cache buster: force rebuild when package-lock.json changes.
+# Prevents stale dependency layers from being reused on deployment.
+ARG CACHE_BUSTER=1
 
 WORKDIR /workspace
 
@@ -41,7 +50,11 @@ RUN npm run build
 # Separate stage: installs --omit=dev so distroless never needs npm or a shell.
 # mkdir -p guards ensure workspace subdirectories always exist for the COPY in
 # stage 3, even when npm hoists all deps to the root node_modules.
+# NOTE: Must use SAME base image tag as Stage 1 to ensure consistency.
 FROM node:24.2.0-bookworm-slim AS runtime-deps
+
+# Cache buster: force rebuild when package-lock.json changes.
+ARG CACHE_BUSTER=1
 
 WORKDIR /workspace
 
@@ -63,6 +76,11 @@ RUN npm ci \
 #   • Minimal glibc + libssl from Debian 12
 #   • No shell, no package manager, no OS utilities
 # Trivy finds near-zero OS CVEs in this image.
+# NOTE: To pin by digest and prevent base image drift:
+#   1. Run: docker pull gcr.io/distroless/nodejs24-debian12:nonroot
+#   2. Run: docker inspect gcr.io/distroless/nodejs24-debian12:nonroot | grep RepoDigests
+#   3. Replace tag with @sha256:DIGEST in FROM statement
+# This prevents "same Dockerfile → different result" risks.
 # ENTRYPOINT is ["/nodejs/bin/node"]; CMD supplies the script path argument.
 FROM gcr.io/distroless/nodejs24-debian12:nonroot AS production
 

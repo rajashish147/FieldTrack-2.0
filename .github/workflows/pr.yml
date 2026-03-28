@@ -96,6 +96,9 @@ jobs:
         run: |
           docker build \
             --target production \
+            --build-arg CACHE_BUSTER=${{ hashFiles('**/package-lock.json') }} \
+            --cache-from=type=gha,scope=pr \
+            --cache-to=type=gha,mode=max,scope=pr \
             -t fieldtrack-backend:ci-validation \
             -f apps/api/Dockerfile \
             .
