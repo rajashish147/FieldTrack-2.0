@@ -214,7 +214,8 @@ export const attendanceRepository = {
 
   /**
    * Get all sessions for a specific employee (employee's own sessions).
-   * Joins employees to include employee_code, employee_name, and activityStatus.
+   * Paginated, ordered by checkin_at DESC. employee_name/employee_code are null
+   * (caller already knows their own identity — no join needed).
    */
   async findSessionsByUser(
     request: FastifyRequest,
@@ -222,9 +223,15 @@ export const attendanceRepository = {
     page: number,
     limit: number,
   ): Promise<{ data: EnrichedAttendanceSession[]; total: number }> {
+    // Phase 30: removed employees join (employee knows their own identity) and
+    // distance_recalculation_status (always null, not used by frontend).
+    // count:"estimated" eliminates the shadow SELECT COUNT(*) on every list call.
     const { data, error, count } = await applyPagination(
       orgTable(request, "attendance_sessions")
-        .select("id, employee_id, organization_id, checkin_at, checkout_at, distance_recalculation_status, total_distance_km, total_duration_seconds, created_at, updated_at, employees!attendance_sessions_employee_id_fkey(name, employee_code)", { count: "exact" })
+        .select(
+          "id, employee_id, organization_id, checkin_at, checkout_at, total_distance_km, total_duration_seconds, created_at, updated_at",
+          { count: "estimated" },
+        )
         .eq("employee_id", employeeId)
         .order("checkin_at", { ascending: false }),
       page,
@@ -235,16 +242,21 @@ export const attendanceRepository = {
       throw new Error(`Failed to fetch user sessions: ${error.message}`);
     }
 
-    const mapped = ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
-      const emp = row.employees as { name?: string; employee_code?: string } | null;
-      const { employees: _, ...rest } = row;
-      return {
-        ...rest,
-        employee_name: emp?.name ?? null,
-        employee_code: emp?.employee_code ?? null,
-        activityStatus: computeActivityStatus(rest.checkout_at as string | null),
-      } as EnrichedAttendanceSession;
-    });
+    const mapped = ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+      id: row.id as string,
+      employee_id: row.employee_id as string,
+      organization_id: row.organization_id as string,
+      checkin_at: row.checkin_at as string,
+      checkout_at: row.checkout_at as string | null,
+      total_distance_km: row.total_distance_km as number | null,
+      total_duration_seconds: row.total_duration_seconds as number | null,
+      distance_recalculation_status: null,
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string,
+      employee_name: null,
+      employee_code: null,
+      activityStatus: computeActivityStatus(row.checkout_at as string | null),
+    } as EnrichedAttendanceSession));
     return { data: mapped, total: count ?? 0 };
   },
 
@@ -264,11 +276,12 @@ export const attendanceRepository = {
     const safeOffset = (Math.max(1, page) - 1) * safeLimit;
 
     // Join employees via FK so employee_name and employee_code are always present.
+    // Phase 30: count:"estimated" eliminates the shadow SELECT COUNT(*) query.
     let query = supabase
       .from("employee_latest_sessions")
       .select(
         "employee_id, organization_id, session_id, latest_checkin, latest_checkout, total_distance_km, total_duration_seconds, status, updated_at, employees!employee_latest_sessions_employee_id_fkey(name, employee_code)",
-        { count: "exact" },
+        { count: "estimated" },
       )
       .eq("organization_id", request.organizationId);
 

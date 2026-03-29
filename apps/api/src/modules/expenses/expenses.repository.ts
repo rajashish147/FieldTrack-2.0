@@ -76,9 +76,13 @@ export const expensesRepository = {
     page: number,
     limit: number,
   ): Promise<{ data: EnrichedExpense[]; total: number }> {
+    // Phase 30: removed employees join (caller already knows their own identity).
+    // count:"estimated" eliminates the shadow SELECT COUNT(*) on every list call.
+    // Index idx_expenses_org_emp_submitted (org_id, emp_id, submitted_at DESC)
+    // covers both the WHERE clause and the ORDER BY in a single index scan.
     const { data, error, count } = await applyPagination(
       orgTable(request, "expenses")
-        .select(EXPENSE_ENRICHED_COLS, { count: "exact" })
+        .select(EXPENSE_COLS, { count: "estimated" })
         .eq("employee_id", employeeId)
         .order("submitted_at", { ascending: false }),
       page,
@@ -89,7 +93,11 @@ export const expensesRepository = {
       throw new Error(`Failed to fetch user expenses: ${error.message}`);
     }
     return {
-      data: ((data ?? []) as Array<Record<string, unknown>>).map(flattenEmployee),
+      data: ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+        ...(row as Expense),
+        employee_name: null,
+        employee_code: null,
+      })),
       total: count ?? 0,
     };
   },
@@ -100,8 +108,11 @@ export const expensesRepository = {
     limit: number,
     employeeId?: string,
   ): Promise<{ data: EnrichedExpense[]; total: number }> {
+    // Phase 30: count:"estimated" eliminates the shadow SELECT COUNT(*) query.
+    // idx_expenses_org_submitted_desc (org_id, submitted_at DESC) covers the
+    // org-wide list; idx_expenses_org_emp_submitted covers the per-employee filter.
     let baseQuery = orgTable(request, "expenses")
-      .select(EXPENSE_ENRICHED_COLS, { count: "exact" })
+      .select(EXPENSE_ENRICHED_COLS, { count: "estimated" })
       .order("submitted_at", { ascending: false });
 
     if (employeeId) {
@@ -147,89 +158,48 @@ export const expensesRepository = {
   },
 
   /**
-   * Returns one summary row per employee with pending/total expense aggregates.
-   * Sorted: employees with pending expenses first, then by latest expense date DESC.
-   * O(distinct employees) — significantly faster than returning all expense rows.
+   * Returns one aggregated row per employee with pending/total expense metrics.
+   * Sorted: employees with ≥1 PENDING expense first, then by latest submitted_at DESC.
+   *
+   * Phase 30: replaced the previous 50 000-row in-memory GROUP BY with a DB-side
+   * SQL aggregation via get_expense_summary_by_employee().  The function runs a
+   * single indexed GROUP BY on the expenses table and joins employees once —
+   * O(distinct employees) instead of O(total expenses).
    */
   async findExpenseSummaryByEmployee(
     request: FastifyRequest,
     page: number,
     limit: number,
   ): Promise<{ data: EmployeeExpenseSummary[]; total: number }> {
-    // Fetch the full (org-scoped) expense list with employee info.
-    // We group in application code to avoid a raw SQL RPC; the expense
-    // table is orders of magnitude smaller than attendance_sessions.
-    //
-    // Safety cap: 50 000 rows is sufficient for any realistic org over several
-    // years of operation (100 employees × 10 expenses/month × 48 months = 48 000).
-    // Without this limit a pathological dataset could cause an unbounded fetch
-    // that exhausts server memory.  If the cap is hit, the structured warning
-    // below will be visible in Loki so operators know to migrate to a DB-side
-    // GROUP BY aggregation.
-    const EXPENSE_SUMMARY_LIMIT = 50_000;
-    const { data, error } = await orgTable(request, "expenses")
-      .select(EXPENSE_ENRICHED_COLS)
-      .order("submitted_at", { ascending: false })
-      .limit(EXPENSE_SUMMARY_LIMIT);
+    const { data, error } = await supabase.rpc("get_expense_summary_by_employee", {
+      p_org_id: request.organizationId,
+    });
 
     if (error) {
       throw new Error(`Failed to fetch expense summary: ${error.message}`);
     }
 
-    const rows = ((data ?? []) as Array<Record<string, unknown>>).map(flattenEmployee);
+    type SummaryRow = {
+      employee_id: string;
+      employee_name: string;
+      employee_code: string | null;
+      pending_count: number | string;
+      pending_amount: number | string;
+      total_count: number | string;
+      total_amount: number | string;
+      latest_expense_date: string | null;
+    };
 
-    // Warn operators when the safety cap fires — this is a signal to migrate
-    // findExpenseSummaryByEmployee to a DB-side GROUP BY aggregation.
-    if (rows.length >= EXPENSE_SUMMARY_LIMIT) {
-      (request as { log?: { warn: (obj: object, msg: string) => void } }).log?.warn(
-        {
-          organizationId: request.organizationId,
-          rowsCapped: EXPENSE_SUMMARY_LIMIT,
-        },
-        "findExpenseSummaryByEmployee hit safety row cap — summary may be incomplete; migrate to DB-side aggregation",
-      );
-    }
-
-    // Aggregate per employee
-    const map = new Map<string, EmployeeExpenseSummary>();
-    for (const row of rows) {
-      const empId = row.employee_id as string;
-      const existing = map.get(empId);
-      const amount = row.amount as number;
-      const isPending = row.status === "PENDING";
-
-      if (!existing) {
-        map.set(empId, {
-          employeeId: empId,
-          employeeName: row.employee_name ?? `Employee …${empId.slice(-4)}`,
-          employeeCode: row.employee_code ?? null,
-          pendingCount: isPending ? 1 : 0,
-          pendingAmount: isPending ? amount : 0,
-          totalCount: 1,
-          totalAmount: amount,
-          latestExpenseDate: row.submitted_at as string,
-        });
-      } else {
-        existing.totalCount++;
-        existing.totalAmount += amount;
-        if (isPending) {
-          existing.pendingCount++;
-          existing.pendingAmount += amount;
-        }
-      }
-    }
-
-    // Sort: pending first, then by latest expense date
-    const groups = [...map.values()].sort((a, b) => {
-      if (b.pendingCount !== a.pendingCount) return b.pendingCount - a.pendingCount;
-      return (b.latestExpenseDate ?? "").localeCompare(a.latestExpenseDate ?? "");
-    });
-
-    // Round amounts
-    for (const g of groups) {
-      g.pendingAmount = Math.round(g.pendingAmount * 100) / 100;
-      g.totalAmount = Math.round(g.totalAmount * 100) / 100;
-    }
+    const groups: EmployeeExpenseSummary[] = ((data ?? []) as SummaryRow[]).map((row) => ({
+      employeeId: row.employee_id,
+      employeeName: row.employee_name,
+      employeeCode: row.employee_code,
+      pendingCount: Number(row.pending_count),
+      pendingAmount: Math.round(Number(row.pending_amount) * 100) / 100,
+      totalCount: Number(row.total_count),
+      totalAmount: Math.round(Number(row.total_amount) * 100) / 100,
+      latestExpenseDate: row.latest_expense_date,
+    }));
 
     const total = groups.length;
     const safeLimit = Math.min(100, Math.max(1, limit));

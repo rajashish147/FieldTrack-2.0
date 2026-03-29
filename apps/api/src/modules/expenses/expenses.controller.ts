@@ -44,7 +44,13 @@ export const expensesController = {
         parsed.page,
         parsed.limit,
       );
-      reply.status(200).send(paginated(result.data, parsed.page, parsed.limit, result.total));
+      const response = paginated(result.data, parsed.page, parsed.limit, result.total);
+      const payloadBytes = Buffer.byteLength(JSON.stringify(response));
+      request.log.info(
+        { route: "/expenses/my", payloadBytes, expenseCount: result.data.length },
+        "phase30:expenses-my",
+      );
+      reply.status(200).send(response);
     } catch (error) {
       handleError(error, request, reply, "Unexpected error fetching user expenses");
     }
@@ -69,11 +75,17 @@ export const expensesController = {
         parsed.limit,
         employeeId,
       );
-      reply.status(200).send(paginated(result.data, parsed.page, parsed.limit, result.total));
+      const response = paginated(result.data, parsed.page, parsed.limit, result.total);
+      const payloadBytes = Buffer.byteLength(JSON.stringify(response));
+      request.log.info(
+        { route: "/admin/expenses", payloadBytes, expenseCount: result.data.length },
+        "phase30:admin-expenses",
+      );
+      reply.status(200).send(response);
     } catch (error) {
       handleError(error, request, reply, "Unexpected error fetching org expenses");
     }
-  },
+  }
 
   /**
    * PATCH /admin/expenses/:id
