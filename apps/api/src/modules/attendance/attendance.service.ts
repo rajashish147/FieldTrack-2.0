@@ -2,6 +2,7 @@ import type { FastifyRequest } from "fastify";
 import { attendanceRepository } from "./attendance.repository.js";
 import { enqueueDistanceJob } from "../../workers/distance.queue.js";
 import { enqueueAnalyticsJob } from "../../workers/analytics.queue.js";
+import { enqueueCheckIn, enqueueCheckOut } from "../../workers/snapshot.queue.js";
 import { getCached } from "../../utils/cache.js";
 import {
   EmployeeAlreadyCheckedIn,
@@ -53,6 +54,17 @@ export const attendanceService = {
         request.log.warn({ sessionId: session.id, error: msg }, "Failed to upsert latest session snapshot after check-in");
       });
 
+    // feat-1: enqueue snapshot update (fire-and-forget, non-blocking)
+    enqueueCheckIn({
+      employeeId,
+      organizationId: request.organizationId,
+      sessionId: session.id,
+      checkinAt: session.checkin_at,
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      request.log.warn({ sessionId: session.id, error: msg }, "feat-1: failed to enqueue CHECK_IN snapshot job (non-fatal)");
+    });
+
     sseEventBus.emitOrgEvent(request.organizationId, "session.checkin", {
       sessionId: session.id,
       employeeId,
@@ -94,6 +106,17 @@ export const attendanceService = {
         const msg = err instanceof Error ? err.message : String(err);
         request.log.warn({ sessionId: closedSession.id, error: msg }, "Failed to upsert latest session snapshot after check-out");
       });
+
+    // feat-1: enqueue snapshot update (fire-and-forget, non-blocking)
+    enqueueCheckOut({
+      employeeId,
+      organizationId: request.organizationId,
+      sessionId: closedSession.id,
+      checkoutAt: closedSession.checkout_at ?? new Date().toISOString(),
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      request.log.warn({ sessionId: closedSession.id, error: msg }, "feat-1: failed to enqueue CHECK_OUT snapshot job (non-fatal)");
+    });
 
     sseEventBus.emitOrgEvent(request.organizationId, "session.checkout", {
       sessionId: closedSession.id,

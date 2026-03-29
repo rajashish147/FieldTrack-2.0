@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { expensesService } from "./expenses.service.js";
+import { expensesRepository } from "./expenses.repository.js";
 import {
   createExpenseBodySchema,
   updateExpenseStatusBodySchema,
@@ -60,6 +61,10 @@ export const expensesController = {
    * GET /admin/expenses
    * Returns all expenses across the organization (ADMIN only, paginated).
    * Accepts optional ?employee_id=<uuid> to scope to a single employee.
+   *
+   * feat-1: When ?status=pending (or no status), the fast path reads from the
+   * pending_expenses snapshot table (O(1) index scan).  For all other status
+   * values the full expenses table is queried (backward-compatible).
    */
   async getOrgAll(
     request: FastifyRequest,
@@ -69,16 +74,56 @@ export const expensesController = {
       const parsed = expensePaginationSchema.parse(request.query);
       const query = request.query as Record<string, string | undefined>;
       const employeeId = query.employee_id;
+      const statusFilter = query.status; // optional: "pending" | "approved" | "rejected"
+      const t0 = Date.now();
+
+      // feat-1: fast path for PENDING expenses view (most common admin use case)
+      if (!statusFilter || statusFilter === "pending") {
+        const snapResult = await expensesRepository.findPendingFromSnapshot(
+          request,
+          parsed.page,
+          parsed.limit,
+          employeeId,
+        );
+
+        const durationMs = Date.now() - t0;
+        request.log.info(
+          {
+            route: "/admin/expenses",
+            source: snapResult.source,
+            durationMs,
+            expenseCount: snapResult.data.length,
+            payloadBytes: Buffer.byteLength(JSON.stringify(snapResult.data)),
+          },
+          "feat1:admin-expenses query",
+        );
+        if (durationMs > 50) {
+          request.log.warn(
+            { route: "/admin/expenses", durationMs, source: snapResult.source },
+            "feat1: slow snapshot read — expected <50ms",
+          );
+        }
+
+        if (snapResult.source === "snapshot") {
+          const response = paginated(snapResult.data, parsed.page, parsed.limit, snapResult.total);
+          reply.status(200).send(response);
+          return;
+        }
+        // Snapshot read failed — fall through to full table query below
+      }
+
+      // Full table query (non-pending status or snapshot unavailable)
       const result = await expensesService.getOrgExpenses(
         request,
         parsed.page,
         parsed.limit,
         employeeId,
       );
+      const durationMs = Date.now() - t0;
       const response = paginated(result.data, parsed.page, parsed.limit, result.total);
       const payloadBytes = Buffer.byteLength(JSON.stringify(response));
       request.log.info(
-        { route: "/admin/expenses", payloadBytes, expenseCount: result.data.length },
+        { route: "/admin/expenses", payloadBytes, expenseCount: result.data.length, durationMs, source: "full_table" },
         "phase30:admin-expenses",
       );
       reply.status(200).send(response);

@@ -8,7 +8,7 @@ import { env } from "../config/env.js";
  * Adding a new worker here automatically propagates the expected count to
  * /ready, /admin/system-health, and all boot logs — no manual number updates.
  */
-export const WORKER_TYPES = ["distance", "analytics", "webhook"] as const;
+export const WORKER_TYPES = ["distance", "analytics", "webhook", "snapshot"] as const;
 export type WorkerType = (typeof WORKER_TYPES)[number];
 
 /** Expected number of background workers in a fully-started process. */
@@ -65,14 +65,17 @@ export async function startWorkers(app: FastifyInstance): Promise<void> {
     { startDistanceWorker },
     { startAnalyticsWorker },
     { startWebhookWorker },
+    { startSnapshotWorker },
   ] = await Promise.all([
     import("./distance.worker.js"),
     import("./analytics.worker.js"),
     import("./webhook.worker.js"),
+    import("./snapshot.worker.js"),
   ]);
 
   startDistanceWorker(app);
   startAnalyticsWorker(app);
   startWebhookWorker(app);
+  startSnapshotWorker(app);
   workersStarted = true;
 }

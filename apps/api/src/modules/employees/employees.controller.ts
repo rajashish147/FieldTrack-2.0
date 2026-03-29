@@ -49,11 +49,24 @@ export const employeesController = {
   /**
    * GET /admin/employees
    * Paginated list of employees in the org with optional name search.
+   * feat-1: enriched with real-time check-in state from employee_last_state snapshot.
    */
   async list(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
       const query = employeeListQuerySchema.parse(request.query);
-      const result = await employeesRepository.listEmployees(request, query);
+      const t0 = Date.now();
+      const result = await employeesRepository.listWithLastState(request, query);
+      const durationMs = Date.now() - t0;
+      request.log.info(
+        { route: "/admin/employees", durationMs, source: result.source, total: result.total },
+        "feat1:admin-employees query",
+      );
+      if (durationMs > 50) {
+        request.log.warn(
+          { route: "/admin/employees", durationMs },
+          "feat1: slow snapshot read — expected <50ms",
+        );
+      }
       reply.status(200).send(paginated(result.data, query.page, query.limit, result.total));
     } catch (error) {
       handleError(error, request, reply, "Unexpected error listing employees");

@@ -9,6 +9,7 @@ import type {
   CreateLocationBatchBody,
 } from "./locations.schema.js";
 import { profileRepository } from "../profile/profile.repository.js";
+import { enqueueLocationUpdate } from "../../workers/snapshot.queue.js";
 
 import { performance } from "perf_hooks";
 
@@ -55,6 +56,19 @@ export const locationsService = {
 
     // Update last_activity_at (fire-and-forget)
     profileRepository.updateLastActivity(request, employeeId).catch(() => {});
+
+    // feat-1: update snapshot with latest GPS fix (fire-and-forget, non-blocking)
+    enqueueLocationUpdate({
+      employeeId,
+      organizationId: request.organizationId,
+      sessionId: body.session_id,
+      latitude: body.latitude,
+      longitude: body.longitude,
+      recordedAt: body.recorded_at,
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      request.log.warn({ sessionId: body.session_id, error: msg }, "feat-1: failed to enqueue LOCATION_UPDATE snapshot job (non-fatal)");
+    });
 
     metrics.incrementLocationsInserted(1);
 
@@ -118,6 +132,22 @@ export const locationsService = {
 
     // Update last_activity_at (fire-and-forget — lightweight, no analytics tables touched)
     profileRepository.updateLastActivity(request, employeeId).catch(() => {});
+
+    // feat-1: update snapshot with the latest GPS fix in the batch (fire-and-forget)
+    const latestPoint = body.points.reduce((latest, p) =>
+      new Date(p.recorded_at) > new Date(latest.recorded_at) ? p : latest,
+    );
+    enqueueLocationUpdate({
+      employeeId,
+      organizationId: request.organizationId,
+      sessionId: body.session_id,
+      latitude: latestPoint.latitude,
+      longitude: latestPoint.longitude,
+      recordedAt: latestPoint.recorded_at,
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      request.log.warn({ sessionId: body.session_id, error: msg }, "feat-1: failed to enqueue LOCATION_UPDATE snapshot job (non-fatal)");
+    });
 
     request.log.info(
       {

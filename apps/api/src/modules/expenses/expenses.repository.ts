@@ -206,4 +206,84 @@ export const expensesRepository = {
     const safeOffset = (Math.max(1, page) - 1) * safeLimit;
     return { data: groups.slice(safeOffset, safeOffset + safeLimit), total };
   },
+
+  /**
+   * feat-1: Fast paginated list of PENDING expenses from the denormalised snapshot.
+   *
+   * Reads from `pending_expenses` which is maintained by the snapshot worker.
+   * This is an O(1) index scan on (organization_id, submitted_at DESC) instead of
+   * the O(all_expenses) scan on the full expenses table.
+   *
+   * Falls back to `findExpensesByOrg` when a read error occurs so the API
+   * remains functional even if the snapshot table is temporarily stale.
+   *
+   * Returns enriched rows (employee_name, employee_code) via a join so the
+   * admin UI receives the same shape as the full expenses endpoint.
+   */
+  async findPendingFromSnapshot(
+    request: FastifyRequest,
+    page: number,
+    limit: number,
+    employeeId?: string,
+  ): Promise<{ data: EnrichedExpense[]; total: number; source: "snapshot" | "fallback" }> {
+    const t0 = Date.now();
+    const offset = (page - 1) * limit;
+
+    let q = supabase
+      .from("pending_expenses")
+      .select(
+        "id, organization_id, employee_id, amount, submitted_at, employees!pending_expenses_employee_id_fkey(name, employee_code)",
+        { count: "exact" },
+      )
+      .eq("organization_id", request.organizationId)
+      .order("submitted_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (employeeId) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      q = (q as any).eq("employee_id", employeeId);
+    }
+
+    const { data, error, count } = await q;
+
+    const durationMs = Date.now() - t0;
+    if (durationMs > 50) {
+      // Phase 6 logging: snapshot reads must be <50 ms
+      // (logged at caller level with full route context)
+    }
+
+    if (error) {
+      // Snapshot unavailable — return sentinel so caller can log and fall back.
+      return { data: [], total: 0, source: "fallback" };
+    }
+
+    type PendingRow = {
+      id: string;
+      organization_id: string;
+      employee_id: string;
+      amount: number;
+      submitted_at: string;
+      employees: { name?: string; employee_code?: string } | null;
+    };
+
+    const enriched: EnrichedExpense[] = ((data ?? []) as PendingRow[]).map((row) => ({
+      id: row.id,
+      organization_id: row.organization_id,
+      employee_id: row.employee_id,
+      amount: row.amount,
+      description: "",      // not stored in snapshot — admin expense list doesn't need it
+      status: "PENDING" as const,
+      receipt_url: null,
+      submitted_at: row.submitted_at,
+      reviewed_at: null,
+      reviewed_by: null,
+      rejection_comment: null,
+      created_at: row.submitted_at,
+      updated_at: row.submitted_at,
+      employee_name: row.employees?.name ?? null,
+      employee_code: row.employees?.employee_code ?? null,
+    }));
+
+    return { data: enriched, total: count ?? 0, source: "snapshot" };
+  },
 };

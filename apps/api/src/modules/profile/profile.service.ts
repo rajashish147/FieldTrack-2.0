@@ -30,10 +30,65 @@ export const profileService = {
       throw new NotFoundError("Employee not found");
     }
 
-    const [stats, expenseStats] = await Promise.all([
-      profileRepository.getEmployeeStats(request, employeeId),
-      profileRepository.getEmployeeExpenseStats(request, employeeId),
-    ]);
+    // feat-1: attempt single-row snapshot read first (O(1) PK lookup).
+    // Falls back to daily_metrics scan when snapshot hasn't been seeded yet.
+    const t0 = Date.now();
+    const snapshot = await profileRepository.getMetricsSnapshot(
+      employeeId,
+      request.organizationId,
+    );
+    const snapshotMs = Date.now() - t0;
+
+    let stats: {
+      totalSessions: number;
+      totalDistanceKm: number;
+      totalDurationSeconds: number;
+      expensesSubmitted: number;
+      expensesApproved: number;
+    };
+
+    if (snapshot) {
+      // Snapshot hit: all totals from one PK lookup — typically <5 ms.
+      if (snapshotMs > 50) {
+        request.log.warn(
+          { employeeId, snapshotMs, route: "profile" },
+          "feat-1: slow snapshot read — expected <50ms",
+        );
+      }
+      const expenseStats = await profileRepository.getEmployeeExpenseStats(request, employeeId);
+      stats = {
+        totalSessions:        snapshot.totalSessions,
+        totalDistanceKm:      snapshot.totalDistanceKm,
+        totalDurationSeconds: snapshot.totalDurationSeconds,
+        expensesSubmitted:    expenseStats.expensesSubmitted,
+        expensesApproved:     expenseStats.expensesApproved,
+      };
+    } else {
+      // Snapshot miss (first run / not yet seeded): fall back to legacy aggregation.
+      request.log.info({ employeeId }, "feat-1: snapshot miss — falling back to daily_metrics");
+      const [legacyStats, expenseStats] = await Promise.all([
+        profileRepository.getEmployeeStats(request, employeeId),
+        profileRepository.getEmployeeExpenseStats(request, employeeId),
+      ]);
+      stats = {
+        totalSessions:        legacyStats.totalSessions,
+        totalDistanceKm:      legacyStats.totalDistanceKm,
+        totalDurationSeconds: legacyStats.totalDurationSeconds,
+        expensesSubmitted:    expenseStats.expensesSubmitted,
+        expensesApproved:     expenseStats.expensesApproved,
+      };
+    }
+
+    request.log.info(
+      {
+        employeeId,
+        snapshotMs,
+        totalMs:   Date.now() - t0,
+        source:    snapshot ? "snapshot" : "daily_metrics",
+        route:     "feat1:profile",
+      },
+      "feat1:profile query",
+    );
 
     return {
       id: employee.id,
@@ -44,13 +99,7 @@ export const profileService = {
       activityStatus: computeActivityStatusFromTimestamp(employee.last_activity_at),
       last_activity_at: employee.last_activity_at,
       created_at: employee.created_at,
-      stats: {
-        totalSessions: stats.totalSessions,
-        totalDistanceKm: stats.totalDistanceKm,
-        totalDurationSeconds: stats.totalDurationSeconds,
-        expensesSubmitted: expenseStats.expensesSubmitted,
-        expensesApproved: expenseStats.expensesApproved,
-      },
+      stats,
     };
   },
 };

@@ -1,4 +1,5 @@
 import { orgTable } from "../../db/query.js";
+import { supabaseServiceClient as supabase } from "../../config/supabase.js";
 import type { FastifyRequest } from "fastify";
 import type { ActivityStatus } from "@fieldtrack/types";
 
@@ -142,5 +143,56 @@ export const profileRepository = {
         "Failed to update last_activity_at",
       );
     }
+  },
+
+  /**
+   * feat-1: Read the precomputed cumulative metrics snapshot for an employee.
+   *
+   * Returns null when the snapshot row doesn't exist yet (e.g. the first
+   * few seconds after a new employee's first check-in).  Callers fall back
+   * to the legacy employee_daily_metrics aggregation in that case.
+   *
+   * Uses the service-role client so this method is also safe to call from
+   * admin contexts where the RLS-bound orgTable might reject the read.
+   */
+  async getMetricsSnapshot(
+    employeeId: string,
+    organizationId: string,
+  ): Promise<{
+    totalSessions: number;
+    totalDistanceKm: number;
+    totalDurationSeconds: number;
+    totalExpenses: number;
+    lastActiveAt: string | null;
+  } | null> {
+    const { data, error } = await supabase
+      .from("employee_metrics_snapshot")
+      .select("total_sessions, total_hours, total_distance, total_expenses, last_active_at")
+      .eq("employee_id", employeeId)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+
+    if (error) {
+      // Non-fatal: fall through to daily_metrics aggregation
+      return null;
+    }
+    if (!data) return null;
+
+    const row = data as {
+      total_sessions: number;
+      total_hours: number;
+      total_distance: number;
+      total_expenses: number;
+      last_active_at: string | null;
+    };
+
+    return {
+      totalSessions:         row.total_sessions ?? 0,
+      // total_hours is stored as hours; callers expect totalDurationSeconds
+      totalDurationSeconds:  Math.round((row.total_hours ?? 0) * 3600),
+      totalDistanceKm:       row.total_distance ?? 0,
+      totalExpenses:         row.total_expenses ?? 0,
+      lastActiveAt:          row.last_active_at,
+    };
   },
 };

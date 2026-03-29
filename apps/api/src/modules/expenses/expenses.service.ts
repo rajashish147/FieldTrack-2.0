@@ -14,6 +14,7 @@ import { invalidateOrgAnalytics } from "../../utils/cache.js";
 import { sseEventBus } from "../../utils/sse-emitter.js";
 import { emitEvent } from "../../utils/event-bus.js";
 import { supabaseServiceClient } from "../../config/supabase.js";
+import { enqueueExpenseCreated, enqueueExpenseResolved } from "../../workers/snapshot.queue.js";
 
 /**
  * Expenses service — business rules for expense management.
@@ -101,6 +102,18 @@ export const expensesService = {
         description:  expense.description,
         submitted_at: expense.submitted_at,
       },
+    });
+
+    // feat-1: insert into pending_expenses snapshot (fire-and-forget)
+    enqueueExpenseCreated({
+      employeeId,
+      organizationId: request.organizationId,
+      expenseId: expense.id,
+      amount: Number(expense.amount),
+      submittedAt: expense.submitted_at,
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      request.log.warn({ expenseId: expense.id, error: msg }, "feat-1: failed to enqueue EXPENSE_CREATED snapshot job (non-fatal)");
     });
 
     return expense;
@@ -230,6 +243,18 @@ export const expensesService = {
         },
       });
     }
+
+    // feat-1: remove from pending_expenses snapshot; update metrics on approval (fire-and-forget)
+    enqueueExpenseResolved({
+      employeeId: updated.employee_id,
+      organizationId: request.organizationId,
+      expenseId: updated.id,
+      amount: Number(updated.amount),
+      resolution: body.status === "APPROVED" ? "EXPENSE_APPROVED" : "EXPENSE_REJECTED",
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      request.log.warn({ expenseId: updated.id, error: msg }, "feat-1: failed to enqueue EXPENSE_RESOLVED snapshot job (non-fatal)");
+    });
 
     return updated;
   },
