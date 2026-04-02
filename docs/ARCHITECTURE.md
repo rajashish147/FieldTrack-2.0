@@ -271,7 +271,7 @@ Fastify API
 │                                                                           │
 │  ┌──────────────────────────────────────────────────────────────┐       │
 │  │                    Docker Network                            │       │
-│  │                  (fieldtrack_network)                        │       │
+│  │                  (api_network)                        │       │
 │  └──────────────────────────────────────────────────────────────┘       │
 │                                                                           │
 │  ┌──────────────────────────────────────────────────────────────┐       │
@@ -403,5 +403,5 @@ Fastify API
 
 - [Deployment Guide](../docs/DEPLOYMENT.md)
 - [Rollback System](../docs/ROLLBACK_SYSTEM.md)
-- [API Documentation](../apps/api/README.md)
+- [API Documentation](../README.md)
 - [CI/CD Pipeline](../.github/workflows/deploy.yml)

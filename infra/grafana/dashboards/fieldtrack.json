@@ -58,7 +58,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(rate(http_requests_total{job=~\"fieldtrack-backend.*\"}[5m])) by (status_code)",
+                    "expr": "sum(rate(http_requests_total{job=~\"fieldtrack-api.*\"}[5m])) by (status_code)",
                     "legendFormat": "{{status_code}}",
                     "refId": "A"
                 }
@@ -101,17 +101,17 @@
             },
             "targets": [
                 {
-                    "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=~\"fieldtrack-backend.*\"}[5m])) by (le))",
+                    "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=~\"fieldtrack-api.*\"}[5m])) by (le))",
                     "legendFormat": "p50",
                     "refId": "A"
                 },
                 {
-                    "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=~\"fieldtrack-backend.*\"}[5m])) by (le))",
+                    "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=~\"fieldtrack-api.*\"}[5m])) by (le))",
                     "legendFormat": "p95",
                     "refId": "B"
                 },
                 {
-                    "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=~\"fieldtrack-backend.*\"}[5m])) by (le))",
+                    "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=~\"fieldtrack-api.*\"}[5m])) by (le))",
                     "legendFormat": "p99",
                     "refId": "C"
                 }
@@ -156,7 +156,7 @@
             },
             "targets": [
                 {
-                    "expr": "http_requests_in_flight{job=~\"fieldtrack-backend.*\"}",
+                    "expr": "http_requests_in_flight{job=~\"fieldtrack-api.*\"}",
                     "legendFormat": "In-Flight",
                     "refId": "A"
                 }
@@ -193,7 +193,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(increase(http_requests_total{job=~\"fieldtrack-backend.*\"}[24h]))",
+                    "expr": "sum(increase(http_requests_total{job=~\"fieldtrack-api.*\"}[24h]))",
                     "legendFormat": "Total",
                     "refId": "A"
                 }
@@ -239,7 +239,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(rate(http_requests_total{job=~\"fieldtrack-backend.*\", status_code=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=~\"fieldtrack-backend.*\"}[5m]))",
+                    "expr": "sum(rate(http_requests_total{job=~\"fieldtrack-api.*\", status_code=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=~\"fieldtrack-api.*\"}[5m]))",
                     "legendFormat": "5xx Rate",
                     "refId": "A"
                 }
@@ -277,7 +277,7 @@
             },
             "targets": [
                 {
-                    "expr": "process_uptime_seconds{job=~\"fieldtrack-backend.*\"}",
+                    "expr": "process_uptime_seconds{job=~\"fieldtrack-api.*\"}",
                     "legendFormat": "Uptime",
                     "refId": "A"
                 }
@@ -312,7 +312,7 @@
             },
             "targets": [
                 {
-                    "expr": "sum(rate(http_requests_total{job=~\"fieldtrack-backend.*\"}[5m])) by (route)",
+                    "expr": "sum(rate(http_requests_total{job=~\"fieldtrack-api.*\"}[5m])) by (route)",
                     "legendFormat": "{{route}}",
                     "refId": "A"
                 }
@@ -347,17 +347,17 @@
             },
             "targets": [
                 {
-                    "expr": "nodejs_heap_size_used_bytes{job=~\"fieldtrack-backend.*\"}",
+                    "expr": "nodejs_heap_size_used_bytes{job=~\"fieldtrack-api.*\"}",
                     "legendFormat": "Heap Used",
                     "refId": "A"
                 },
                 {
-                    "expr": "nodejs_heap_size_total_bytes{job=~\"fieldtrack-backend.*\"}",
+                    "expr": "nodejs_heap_size_total_bytes{job=~\"fieldtrack-api.*\"}",
                     "legendFormat": "Heap Total",
                     "refId": "B"
                 },
                 {
-                    "expr": "process_resident_memory_bytes{job=~\"fieldtrack-backend.*\"}",
+                    "expr": "process_resident_memory_bytes{job=~\"fieldtrack-api.*\"}",
                     "legendFormat": "RSS",
                     "refId": "C"
                 }
@@ -675,6 +675,6 @@
     "timepicker": {},
     "timezone": "browser",
     "title": "FieldTrack 2.0 — Backend & System",
-    "uid": "fieldtrack-backend",
+    "uid": "fieldtrack-api",
     "version": 2
 }

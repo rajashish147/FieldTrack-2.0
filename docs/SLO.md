@@ -19,7 +19,7 @@ This document defines the service-level objectives for FieldTrack production ser
 
 | | |
 |---|---|
-| **SLI** | `up{job=~"fieldtrack-backend.*"}` |
+| **SLI** | `up{job=~"fieldtrack-api.*"}` |
 | **Target** | 99.9% monthly availability |
 | **Error budget** | 43.8 minutes / month |
 | **Window** | 30-day rolling |
@@ -40,7 +40,7 @@ Sub-1h monthly downtime budget is appropriate for a B2B scheduling SaaS.  Breach
 | **Window** | 5-minute rolling (monitored), 1-hour burn rate (alerting) |
 
 ### Rationale
-500 ms p95 ensures interactive response times for the React frontend.  The 2 s p99 provides a safety margin for background operations (bulk import, report generation) without breaching the user-visible latency SLO.
+500 ms p95 ensures interactive response times for connected clients.  The 2 s p99 provides a safety margin for background operations (bulk import, report generation) without breaching the user-visible latency SLO.
 
 ---
 

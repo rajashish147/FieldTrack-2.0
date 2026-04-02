@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This document covers deploying FieldTrack 2.0 to a Linux VPS using the included blue-green deployment system.
+This document covers deploying FieldTrack API to a Linux VPS using the included blue-green deployment system.
 
 ---
 
@@ -19,7 +19,7 @@ The `vps-setup.sh` script handles the full first-time setup of a fresh VPS:
 
 ```bash
 # Copy the script to the VPS and run as root
-scp apps/api/scripts/vps-setup.sh root@your-server:/tmp/
+scp scripts/vps-setup.sh root@your-server:/tmp/
 ssh root@your-server 'bash /tmp/vps-setup.sh'
 ```
 
@@ -40,27 +40,22 @@ Before running, update the variables at the top of the script:
 DOMAIN="yourdomain.com"         # Your server's domain
 DEPLOY_USER="fieldtrack"        # OS user to run the service
 GH_USER="your-github-username"  # GitHub username (for GHCR)
-REPO_URL="https://github.com/your-username/FieldTrack-2.0.git"
+REPO_URL="https://github.com/your-username/api.git"
 ```
 
 ---
 
 ## API Deployment
 1. SSH into VPS
-2. Run `apps/api/scripts/vps-setup.sh` from workspace root
+2. Run `scripts/vps-setup.sh` from workspace root
 3. Set `.env` and `.env.monitoring` in workspace root
 4. Start monitoring stack: `docker-compose -f infra/docker-compose.monitoring.yml up -d`
-5. Deploy API: `apps/api/scripts/deploy-bluegreen.sh`
+5. Deploy API: `scripts/deploy-bluegreen.sh`
 6. Confirm readiness: `curl https://<domain>/ready`
 7. Confirm Prometheus target status is UP
 
-## Web Deployment
-1. Set `.env` in workspace root
-2. Deploy web: `cd apps/web && npm run build && npm run start`
-
 ## Rollback
-1. API: `apps/api/scripts/rollback.sh`
-2. Web: `apps/web/scripts/rollback.sh`
+1. API: `scripts/rollback.sh`
 
 ## Monitoring
 1. Set `.env.monitoring` in workspace root
@@ -71,8 +66,8 @@ REPO_URL="https://github.com/your-username/FieldTrack-2.0.git"
 6. Tempo: `http://<domain>:3200`
 
 ## Nginx
-1. Config: `infra/nginx/fieldtrack.conf`
-2. Canonical path: `/etc/nginx/conf.d/fieldtrack.conf`
+1. Config: `infra/nginx/api.conf`
+2. Canonical path: `/etc/nginx/conf.d/api.conf`
 3. TLS bootstrap: two-stage via Certbot
 
 ## Troubleshooting
@@ -80,12 +75,12 @@ REPO_URL="https://github.com/your-username/FieldTrack-2.0.git"
 2. Alerts: `infra/prometheus/alerts.yml`
 3. Config: `infra/prometheus/prometheus.yml`
 4. Grafana dashboards: `infra/grafana/dashboards/`
-5. Nginx config: `infra/nginx/fieldtrack.conf`
+5. Nginx config: `infra/nginx/api.conf`
 The deployment uses a blue-green strategy for zero-downtime releases.
 
 ### How It Works
 
-The VPS always runs **two containers** (`backend-blue` on port 3001, `backend-green` on port 3002). Nginx routes all traffic to whichever is currently active.
+The VPS always runs **two containers** (`api-blue` on port 3001, `api-green` on port 3002). Nginx routes all traffic to whichever is currently active.
 
 On each deploy:
 
@@ -100,7 +95,7 @@ On each deploy:
 
 ```bash
 # SSH into the VPS
-cd /home/ashish/FieldTrack-2.0/apps/api
+cd /home/ashish/api
 
 # Deploy a specific image SHA (e.g. from CI output)
 ./scripts/deploy-bluegreen.sh a4f91c2
@@ -116,7 +111,7 @@ cd /home/ashish/FieldTrack-2.0/apps/api
 To instantly revert to the previous deployment:
 
 ```bash
-cd /home/ashish/FieldTrack-2.0/apps/api
+cd /home/ashish/api
 ./scripts/rollback.sh
 ```
 
@@ -160,9 +155,9 @@ The pre-built Grafana dashboard (`infra/grafana/dashboards/fieldtrack.json`) is 
 
 ## Environment Variables
 
-Copy `apps/api/.env.example` to `apps/api/.env` on the VPS and fill in all values before the first deploy.
+Copy `.env.example` to `.env` on the VPS and fill in all values before the first deploy.
 
-See [apps/api/README.md](../apps/api/README.md) for the full variable reference.
+See [README.md](../README.md) for the full variable reference.
 
 ---
 
@@ -184,7 +179,7 @@ The deployment script now uses `/ready` to validate dependency readiness before 
 **Deployment hangs on health check**  
 The new container failed to start. Check Docker logs:
 ```bash
-docker logs backend-green   # or backend-blue
+docker logs api-green   # or api-blue
 ```
 
 **Rollback fails: "insufficient deployment history"**  
@@ -196,7 +191,7 @@ Only one deployment has been recorded. Deploy manually with a known-good SHA:
 **Container image not found in GHCR**  
 The SHA must match a tag pushed to GHCR. Verify with:
 ```bash
-docker pull ghcr.io/<your-username>/fieldtrack-backend:<sha>
+docker pull ghcr.io/fieldtrack-tech/api:<sha>
 ```
 
 **Nginx fails to reload**  

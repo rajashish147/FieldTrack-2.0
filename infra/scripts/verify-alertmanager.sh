@@ -106,7 +106,7 @@ log_info "Sending test alert to Alertmanager"
 TEST_ALERT_PAYLOAD=$(cat <<'EOF'
 [{
   "labels": {
-    "alertname": "FieldTrackAlertmanagerVerification",
+    "alertname": "ApiAlertmanagerVerification",
     "severity": "warning",
     "job": "fieldtrack-api"
   },
@@ -139,7 +139,7 @@ log_info "Waiting 2 seconds for alert to be indexed..."
 sleep 2
 
 ACTIVE_ALERTS=$(curl -s --max-time 10 \
-  "${ALERTMANAGER_URL}/api/v2/alerts?filter=alertname%3DFieldTrackAlertmanagerVerification" \
+  "${ALERTMANAGER_URL}/api/v2/alerts?filter=alertname%3DApiAlertmanagerVerification" \
   -H "Accept: application/json" || echo "[]")
 
 if echo "$ACTIVE_ALERTS" | jq -e 'length > 0' &>/dev/null; then
@@ -179,15 +179,14 @@ if [ "$FAIL" -gt 0 ]; then
   echo "Common fixes:"
   echo "  • Not running? Start with:"
   echo "      docker compose -f infra/docker-compose.monitoring.yml up -d alertmanager prometheus"
-  echo "  • SMTP env vars missing? Add to infra/.env.monitoring:"
-  echo "      ALERTMANAGER_SMTP_FROM, ALERTMANAGER_SMTP_HOST, ALERTMANAGER_SMTP_USER,"
-  echo "      ALERTMANAGER_SMTP_PASSWORD, ALERTMANAGER_NOTIFY_EMAIL"
-  echo "  • Prometheus can't reach Alertmanager? Verify they share fieldtrack_network."
+  echo "  • Slack webhook missing? Add to infra/.env.monitoring:"
+  echo "      ALERTMANAGER_SLACK_WEBHOOK"
+  echo "  • Prometheus can't reach Alertmanager? Verify they share api_network."
   exit 1
 fi
 
 echo "All checks passed. Alertmanager is operational."
 echo ""
-echo "NOTE: The test alert 'FieldTrackAlertmanagerVerification' will auto-resolve in 5 minutes."
+echo "NOTE: The test alert 'ApiAlertmanagerVerification' will auto-resolve in 5 minutes."
 echo "      You can silence it early via: ${ALERTMANAGER_URL}/#/silences"
 exit 0

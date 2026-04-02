@@ -1,45 +1,45 @@
-global:
-  resolve_timeout: 5m
-  # Default SMTP settings — override with environment variables in production.
-  # Set ALERTMANAGER_SMTP_FROM, ALERTMANAGER_SMTP_HOST, ALERTMANAGER_SMTP_USER,
-  # ALERTMANAGER_SMTP_PASSWORD in infra/.env.monitoring before deploying.
-  smtp_from: "${ALERTMANAGER_SMTP_FROM}"
-  smtp_smarthost: "${ALERTMANAGER_SMTP_HOST}:587"
-  smtp_auth_username: "${ALERTMANAGER_SMTP_USER}"
-  smtp_auth_password: "${ALERTMANAGER_SMTP_PASSWORD}"
-  smtp_require_tls: true
+# Alertmanager route and receiver configuration for Slack-only alerting.
+# No email or SMTP configurations are present.
 
-# Group related alerts and suppress repeated notifications.
 route:
+  receiver: ops-slack
   group_by: ["alertname", "severity"]
-  group_wait: 30s        # Wait before sending initial notification
-  group_interval: 5m     # Minimum time between grouped notifications
-  repeat_interval: 4h    # Resend if alert is still firing after 4 hours
-  receiver: "ops-email"
-
-  # Critical alerts bypass the 4-hour repeat interval — resend every hour.
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
   routes:
-    - matchers:
-        - severity="critical"
-      receiver: "ops-email"
-      repeat_interval: 1h
+    - match:
+        severity: critical
+      receiver: ops-slack-critical
+
+    - match:
+        severity: warning
+      receiver: ops-slack-warning
 
 receivers:
-  - name: "ops-email"
-    email_configs:
-      - to: "${ALERTMANAGER_NOTIFY_EMAIL}"
+  - name: ops-slack-critical
+    slack_configs:
+      - api_url: "${ALERTMANAGER_SLACK_WEBHOOK}"
+        channel: "#critical-alerts"
         send_resolved: true
-        headers:
-          subject: '[{{ .Status | toUpper }}{{ if eq .Status "firing" }} ({{ .Alerts.Firing | len }}){{ end }}] FieldTrack — {{ .CommonAnnotations.summary }}'
-        html: |
-          {{ range .Alerts }}
-          <b>Alert:</b> {{ .Annotations.summary }}<br/>
-          <b>Severity:</b> {{ .Labels.severity }}<br/>
-          <b>Description:</b> {{ .Annotations.description }}<br/>
-          <b>Started:</b> {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}<br/>
-          {{ if .EndsAt }}<b>Resolved:</b> {{ .EndsAt.Format "2006-01-02 15:04:05 UTC" }}<br/>{{ end }}
-          <hr/>
-          {{ end }}
+        title: "[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}"
+        text: |
+          *Severity:* {{ .CommonLabels.severity }}
+          *Instance:* {{ .CommonLabels.instance }}
+          *Summary:* {{ .CommonAnnotations.summary }}
+          *Description:* {{ .CommonAnnotations.description }}
+
+  - name: ops-slack-warning
+    slack_configs:
+      - api_url: "${ALERTMANAGER_SLACK_WEBHOOK}"
+        channel: "#alerts"
+        send_resolved: true
+        title: "[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}"
+        text: |
+          *Severity:* {{ .CommonLabels.severity }}
+          *Instance:* {{ .CommonLabels.instance }}
+          *Summary:* {{ .CommonAnnotations.summary }}
+          *Description:* {{ .CommonAnnotations.description }}
 
 # Silence rules: suppress expected noise during planned maintenance.
 # Add entries here before a deployment rather than disabling alerting entirely.

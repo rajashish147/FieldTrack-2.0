@@ -1,4 +1,4 @@
-# FieldTrack 2.0 — Environment Variable Contract
+# FieldTrack API — Environment Variable Contract
 
 > **Single source of truth for all environment variables across every layer of the system.**
 >
@@ -17,16 +17,10 @@
 │                 │  FRONTEND_BASE_URL           │  EXTERNAL URL   │
 │                 │  PORT, CORS_ORIGIN, …        │  INTERNAL       │
 ├──────────────────────────────────────────────────────────────────┤
-│  Frontend (web) │  NEXT_PUBLIC_API_BASE_URL    │  EXTERNAL URL   │
-│                 │  NEXT_PUBLIC_SUPABASE_URL    │  EXTERNAL URL   │
-│                 │  NEXT_PUBLIC_SUPABASE_ANON_KEY               │
-│                 │  NEXT_PUBLIC_MAPBOX_TOKEN    │  CLIENT-SIDE    │
-├──────────────────────────────────────────────────────────────────┤
 │  CI / Scripts   │  API_BASE_URL                │  EXTERNAL URL   │
 │                 │  CORS_ORIGIN                 │  DEPLOY CONFIG  │
 ├──────────────────────────────────────────────────────────────────┤
 │  Infra          │  API_HOSTNAME                │  DOMAIN ONLY    │
-│                 │  FRONTEND_DOMAIN             │  DOMAIN ONLY    │
 │                 │  METRICS_SCRAPE_TOKEN        │  SECURITY       │
 │                 │  GRAFANA_ADMIN_PASSWORD      │  SECURITY       │
 └──────────────────────────────────────────────────────────────────┘
@@ -40,16 +34,15 @@
 |---------|---------|---------|
 | `*_BASE_URL` | Full URL — scheme + host, **no trailing slash** | `https://api.getfieldtrack.app` |
 | `*_HOSTNAME` | Bare domain — **no scheme, no path** | `api.getfieldtrack.app` |
-| `NEXT_PUBLIC_*` | Next.js browser-baked build-time variable | `NEXT_PUBLIC_API_BASE_URL` |
 
 **`API_HOSTNAME` is always DERIVED from `API_BASE_URL` at deploy-time by `load-env.sh`.**  
-It must **never** be set in `apps/api/.env` — set it only in `infra/.env.monitoring`.
+It must **never** be set in `.env` — set it only in `infra/.env.monitoring`.
 
 ---
 
-## Backend — `apps/api`
+## Backend
 
-Validated by `apps/api/src/config/env.ts` (Zod schema, fail-fast).
+Validated by `src/config/env.ts` (Zod schema, fail-fast).
 
 ### URLs
 
@@ -57,7 +50,27 @@ Validated by `apps/api/src/config/env.ts` (Zod schema, fail-fast).
 |----------|:---:|------|---------|
 | `API_BASE_URL` | ✅ | `https://…` URL | **The canonical public URL of this API.** Used in OpenAPI server definitions and any server-generated links referencing the API itself. Also used by all deploy scripts and CI smoke tests. |
 | `APP_BASE_URL` | ✅ | `https://…` URL | Canonical root URL for the whole application. Used in email footers, OpenGraph canonical tags, and generic redirects that don't need to distinguish API vs frontend. |
-| `FRONTEND_BASE_URL` | ✅ | `https://…` URL | Public URL of the frontend app. Used to build password-reset and invitation email links. |
+| `FRONTEND_BASE_URL` | ✅ | `https://…` URL | Public URL of the web frontend (maintained in a separate repository: `fieldtrack-tech/web`). Used to build password-reset and invitation email links. |
+
+#### `FRONTEND_BASE_URL` — Usage Contract
+
+`FRONTEND_BASE_URL` is the **single canonical variable** for the frontend URL. There are no aliases.
+
+**Used for:**
+- Password-reset email links: `${FRONTEND_BASE_URL}/reset-password?token=…`
+- Invitation email links: `${FRONTEND_BASE_URL}/accept-invite?token=…`
+- User-facing redirects that land the user in the web UI
+
+**NOT used for:**
+- CORS allowed-origin configuration (use `CORS_ORIGIN`)
+- API routing or reverse-proxy targets
+- Internal service-to-service calls
+
+**Validation rules (enforced at startup by Zod):**
+- Must be a valid absolute URL (`http://` or `https://`)
+- Must **not** end with a trailing slash — trailing slashes are stripped automatically and asserted by schema refine
+- Optional outside production; **required in production** — startup fails if absent when `APP_ENV=production`
+- No fallback — if the value is missing in production, the process exits with a clear error
 
 ### Runtime
 
@@ -85,7 +98,7 @@ Validated by `apps/api/src/config/env.ts` (Zod schema, fail-fast).
 | `CORS_ORIGIN` | ✅ | `""` (dev fallback) | Comma-separated allowed CORS origins. Empty in dev activates safe localhost fallback. Must be explicit in production. |
 | `METRICS_SCRAPE_TOKEN` | ✅ | — | Bearer token Prometheus must present to scrape `/metrics`. Unset = open in dev/test. **Must** be set in production. |
 | `TEMPO_ENDPOINT` | — | `http://tempo:4318` | OTLP HTTP endpoint for Grafana Tempo traces. |
-| `SERVICE_NAME` | — | `fieldtrack-backend` | OpenTelemetry service name label. |
+| `SERVICE_NAME` | — | `fieldtrack-api` | OpenTelemetry service name label. |
 | `GITHUB_SHA` | — | `"manual"` | Git commit SHA. Auto-injected by GitHub Actions. |
 
 ### Limits
@@ -106,20 +119,6 @@ Validated by `apps/api/src/config/env.ts` (Zod schema, fail-fast).
 |----------|---------|
 | `WORKERS_ENABLED` | Set to `"false"` in CI/test to disable BullMQ workers (Redis not required). Default `"true"` in production. |
 | `CI` | Auto-set by GitHub Actions. Used for logging only. |
-
----
-
-## Frontend — `apps/web`
-
-Validated by `apps/web/src/lib/env.ts` (Zod, fail-fast at build/server time).  
-All variables are `NEXT_PUBLIC_*` — baked in at Next.js build time.
-
-| Variable | Required | Type | Purpose |
-|----------|:---:|------|---------|
-| `NEXT_PUBLIC_API_BASE_URL` | ✅ | Full URL **or** root-relative path | **The backend API URL for browser requests.** `https://api.…` = direct call; `/api/proxy` = routed via Next.js server-side proxy (avoids CORS preflight). |
-| `NEXT_PUBLIC_SUPABASE_URL` | ✅ | `https://…` URL | Supabase project URL for client-side auth. |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | String | Supabase anon key. Subject to RLS. |
-| `NEXT_PUBLIC_MAPBOX_TOKEN` | ✅ | String | Mapbox access token for map rendering. |
 
 ---
 
@@ -153,18 +152,19 @@ Used by Docker Compose for Prometheus, Grafana, Nginx, Blackbox Exporter.
 | Variable | Required | Purpose |
 |----------|:---:|---------|
 | `API_HOSTNAME` | ✅ | Bare domain for Prometheus scrape target and Grafana root URL. **Always derived from `API_BASE_URL`** — set explicitly here to match. Example: `api.getfieldtrack.app` |
-| `FRONTEND_DOMAIN` | ✅ | Frontend domain for Nginx `server_name`. Example: `app.getfieldtrack.app` |
+
 | `GRAFANA_ADMIN_PASSWORD` | ✅ | Grafana admin account password (min 12 chars). |
-| `METRICS_SCRAPE_TOKEN` | ✅ | **Must be identical to `METRICS_SCRAPE_TOKEN` in `apps/api/.env`.** Bearer token for `/metrics` scraping. |
+| `METRICS_SCRAPE_TOKEN` | ✅ | **Must be identical to `METRICS_SCRAPE_TOKEN` in `.env`.** Bearer token for `/metrics` scraping. |
+| `ALERTMANAGER_SLACK_WEBHOOK` | ✅ | Slack incoming webhook URL for alert delivery. |
 
 ---
 
 ## Environment Examples
 
-### Development (`.env.local` / `apps/api/.env`)
+### Development (`.env.local` / `.env`)
 
 ```bash
-# Backend apps/api/.env
+# Backend .env
 CONFIG_VERSION=1
 APP_ENV=development
 NODE_ENV=development
@@ -178,12 +178,6 @@ SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
 SUPABASE_JWT_SECRET=at-least-32-chars-long-for-hs256-dev
 REDIS_URL=redis://localhost:6379
-
-# Frontend apps/web/.env.local
-NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
-NEXT_PUBLIC_MAPBOX_TOKEN=pk.eyJ...
 ```
 
 ### Staging
@@ -196,14 +190,8 @@ APP_BASE_URL=https://staging.getfieldtrack.app
 FRONTEND_BASE_URL=https://app.staging.getfieldtrack.app
 CORS_ORIGIN=https://app.staging.getfieldtrack.app
 
-# Frontend
-NEXT_PUBLIC_API_BASE_URL=https://api.staging.getfieldtrack.app
-# OR use proxy mode:
-# NEXT_PUBLIC_API_BASE_URL=/api/proxy
-
 # Infra
 API_HOSTNAME=api.staging.getfieldtrack.app
-FRONTEND_DOMAIN=app.staging.getfieldtrack.app
 ```
 
 ### Production
@@ -218,13 +206,8 @@ FRONTEND_BASE_URL=https://app.getfieldtrack.app
 CORS_ORIGIN=https://app.getfieldtrack.app
 METRICS_SCRAPE_TOKEN=<openssl rand -hex 32>
 
-# Frontend (Vercel)
-NEXT_PUBLIC_API_BASE_URL=/api/proxy
-# NEXT_PUBLIC_API_BASE_URL=https://api.getfieldtrack.app  # alternative: direct call
-
 # Infra (infra/.env.monitoring on VPS)
 API_HOSTNAME=api.getfieldtrack.app
-FRONTEND_DOMAIN=app.getfieldtrack.app
 METRICS_SCRAPE_TOKEN=<same token as backend>
 GRAFANA_ADMIN_PASSWORD=<strong password>
 
@@ -254,8 +237,7 @@ SUPABASE_ANON_KEY=eyJ...
 | `SUPABASE_URL` | EXTERNAL | Supabase managed service. |
 | `API_BASE_URL` | EXTERNAL | Public internet URL. |
 | `APP_BASE_URL` | EXTERNAL | Public internet URL. |
-| `FRONTEND_BASE_URL` | EXTERNAL | Public internet URL. |
-| `NEXT_PUBLIC_API_BASE_URL` | EXTERNAL (or same-origin proxy) | Browser-accessible. |
+| `FRONTEND_BASE_URL` | EXTERNAL | Public internet URL. Points to the web frontend (fieldtrack-tech/web). |
 | `API_HOSTNAME` | INFRA-INTERNAL | Used for Nginx/Prometheus config, derived from `API_BASE_URL`. |
 
 ---
@@ -267,9 +249,6 @@ The following variables were **renamed** as part of the env contract cleanup (Ma
 | Old Name | New Name | Where |
 |----------|----------|-------|
 | `FT_API_BASE_URL` | `API_BASE_URL` | GitHub secrets, `smoke-test.sh`, `deploy.yml` |
-| `NEXT_PUBLIC_API_URL` | `NEXT_PUBLIC_API_BASE_URL` | `apps/web/.env.local`, Vercel project settings, `deploy.yml`, `pr.yml` |
 
 **Action required:**
 1. Rename the GitHub repository secret `FT_API_BASE_URL` → `API_BASE_URL`
-2. Update `NEXT_PUBLIC_API_URL` → `NEXT_PUBLIC_API_BASE_URL` in Vercel project environment settings
-3. If you have local `.env.local` files, rename `NEXT_PUBLIC_API_URL` in them

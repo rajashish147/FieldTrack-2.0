@@ -4,13 +4,13 @@
 
 ### Deploy Latest Version
 ```bash
-cd /home/ashish/FieldTrack-2.0/apps/api
+cd /api
 ./scripts/deploy-bluegreen.sh <SHA>
 ```
 
 ### Rollback to Previous Version
 ```bash
-cd /home/ashish/FieldTrack-2.0/apps/api
+cd /api
 ./scripts/rollback.sh
 ```
 
@@ -95,7 +95,7 @@ cd /home/ashish/FieldTrack-2.0/apps/api
 ## File Locations
 
 ```
-/home/ashish/FieldTrack-2.0/apps/api/
+/api/
 ├── scripts/
 │   ├── deploy-bluegreen.sh
 │   └── rollback.sh
@@ -143,11 +143,11 @@ Production is now running: a4f91c2
 
 | Issue | Solution |
 |-------|----------|
-| Script not executable | `chmod +x apps/api/scripts/rollback.sh` |
+| Script not executable | `chmod +x scripts/rollback.sh` |
 | No deployment history | Deploy at least once before rollback |
 | Insufficient history | Need at least 2 deployments to rollback |
 | Image not found | Verify SHA exists in GHCR |
-| Health check fails | Check logs: `docker logs backend-blue` |
+| Health check fails | Check logs: `docker logs api-blue` |
 
 ## Performance
 

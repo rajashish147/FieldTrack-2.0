@@ -15,7 +15,7 @@
 # Parallel stages:
 #   validate ─┐
 #   test-api  ├─► build-scan-push ─► deploy ─► sync-infra ─► health-and-smoke
-#   build-web ┘                                                      │
+#             ┘                                                      │
 #                                              rollback ◄────────────┘ (on failure)
 
 name: Deploy to Production
@@ -40,7 +40,7 @@ jobs:
   # JOB: validate
   #
   # Fast pre-flight: TypeScript check + dependency audit.
-  # Runs in parallel with test-api and build-web to maximise pipeline speed.
+  # Runs in parallel with test-api to maximise pipeline speed.
   # ---------------------------------------------------------------------------
   validate:
     name: Validate (typecheck + audit)
@@ -64,9 +64,9 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: '**/package-lock.json'
+          cache-dependency-path: package-lock.json
 
-      - name: Install workspace dependencies (with retry)
+      - name: Install dependencies (with retry)
         run: |
           echo "::group::npm ci"
           for attempt in 1 2 3; do
@@ -77,21 +77,27 @@ jobs:
           done
           echo "::endgroup::"
 
-      - name: Build shared types
-        run: npm run build -w packages/types
-
       - name: Dependency vulnerability scan
         run: npm audit --omit=dev --audit-level=high
 
-      - name: TypeScript check (API)
-        working-directory: apps/api
-        run: npx tsc --noEmit
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: Env contract guard (no direct process.env outside env.ts)
+        run: |
+          if grep -r --include="*.ts" "process\.env" src/ \
+               | grep -v "src/config/env\.ts"; then
+            echo "❌ Direct process.env access detected outside env.ts"
+            echo "   Use: import { env } from './config/env.js' instead"
+            exit 1
+          fi
+          echo "✅ Env contract clean — no direct process.env access outside env.ts"
 
   # ---------------------------------------------------------------------------
   # JOB: test-api
   #
   # Full backend test suite — unit tests then integration tests.
-  # Runs in parallel with validate and build-web.
+  # Runs in parallel with validate.
   # ---------------------------------------------------------------------------
   test-api:
     name: API Tests (unit + integration)
@@ -110,9 +116,9 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: '**/package-lock.json'
+          cache-dependency-path: package-lock.json
 
-      - name: Install workspace dependencies (with retry)
+      - name: Install dependencies (with retry)
         run: |
           echo "::group::npm ci"
           for attempt in 1 2 3; do
@@ -123,73 +129,8 @@ jobs:
           done
           echo "::endgroup::"
 
-      - name: Build shared types
-        run: npm run build -w packages/types
-
-      - name: Unit tests
-        working-directory: apps/api
-        run: npx vitest run tests/unit/
-
-      - name: Integration tests
-        working-directory: apps/api
-        run: npx vitest run tests/integration/
-
-  # ---------------------------------------------------------------------------
-  # JOB: build-web
-  #
-  # Full frontend validation and production build.
-  # Runs in parallel with validate and test-api.
-  # ---------------------------------------------------------------------------
-  build-web:
-    name: Frontend Build (typecheck + lint + build)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      NEXT_PUBLIC_API_BASE_URL: /api/proxy
-      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
-      NEXT_PUBLIC_MAPBOX_TOKEN: pk.ci-build-placeholder
-    steps:
-      - name: Verify NEXT_PUBLIC_API_BASE_URL is set
-        run: |
-          if [ -z "$NEXT_PUBLIC_API_BASE_URL" ]; then
-            echo "::error::NEXT_PUBLIC_API_BASE_URL is not set. Add it to the job env block."
-            exit 1
-          fi
-          echo "NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}"
-
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js 24
-        uses: actions/setup-node@v5
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: '**/package-lock.json'
-
-      - name: Install workspace dependencies (with retry)
-        run: |
-          echo "::group::npm ci"
-          for attempt in 1 2 3; do
-            npm ci && break
-            [ $attempt -eq 3 ] && { echo "::error::npm ci failed after 3 attempts"; exit 1; }
-            echo "Attempt $attempt failed — retrying in 15s..."
-            sleep 15
-          done
-          echo "::endgroup::"
-
-      - name: Build shared types
-        run: npm run build -w packages/types
-
-      - name: TypeScript check (web)
-        run: npm run typecheck -w apps/web
-
-      - name: ESLint (web)
-        run: npm run lint -w apps/web
-
-      - name: Next.js production build
-        run: npm run build -w apps/web
+      - name: Run all tests
+        run: npm test
 
   # ---------------------------------------------------------------------------
   # JOB: build-scan-push
@@ -211,7 +152,7 @@ jobs:
   build-scan-push:
     name: Build, Scan & Push Docker Image
     runs-on: ubuntu-latest
-    needs: [validate, test-api, build-web]
+    needs: [validate, test-api]
     timeout-minutes: 25
     permissions:
       contents: read
@@ -245,7 +186,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./apps/api/Dockerfile
+          file: ./Dockerfile
           target: production
           build-args: |
             NODE_ENV=production
@@ -254,7 +195,7 @@ jobs:
           load: true
           pull: true
           tags: |
-            fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+            fieldtrack-api:${{ steps.meta.outputs.sha_short }}
           cache-from: type=gha,scope=production
           cache-to: type=gha,mode=max,scope=production
 
@@ -262,7 +203,7 @@ jobs:
       # tls.createSecureContext() fails if libssl linkage is broken, proving runtime health.
       - name: Verify Node.js runtime (TLS operational check)
         run: |
-          IMAGE_NAME="fieldtrack-backend:${{ steps.meta.outputs.sha_short }}"
+          IMAGE_NAME="fieldtrack-api:${{ steps.meta.outputs.sha_short }}"
           echo "Testing image: $IMAGE_NAME"
           docker run --rm \
             --entrypoint /nodejs/bin/node \
@@ -282,7 +223,7 @@ jobs:
       - name: Capture image digest
         id: digest
         run: |
-          IMAGE_NAME="fieldtrack-backend:${{ steps.meta.outputs.sha_short }}"
+          IMAGE_NAME="fieldtrack-api:${{ steps.meta.outputs.sha_short }}"
           DIGEST=$(docker inspect "$IMAGE_NAME" --format='{{.Id}}')
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           echo "=== Build traceability ==="
@@ -376,7 +317,7 @@ jobs:
 
       - name: Scan image with Trivy (HIGH/CRITICAL, ignore-unfixed)
         env:
-          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+          IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
         run: |
           SCAN_PASSED=false
           for i in 1 2 3; do
@@ -407,7 +348,7 @@ jobs:
       - name: Scan for unfixed CRITICAL vulnerabilities (informational)
         continue-on-error: true
         env:
-          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+          IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
         run: |
           UNFIXED_COUNT=$(docker run --rm \
             --network none \
@@ -436,7 +377,7 @@ jobs:
 
       - name: Generate Trivy scan results (SARIF for GitHub Security)
         env:
-          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+          IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
         run: |
           docker run --rm \
             --network none \
@@ -461,7 +402,7 @@ jobs:
       # is exactly what lands in the registry.
       - name: Verify image digest unchanged before push
         env:
-          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+          IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
           IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
           # docker inspect .Id returns the config digest (sha256:...) which is
@@ -486,16 +427,16 @@ jobs:
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           docker tag \
-            fieldtrack-backend:${{ steps.meta.outputs.sha_short }} \
-            ghcr.io/${OWNER}/fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
-          docker push ghcr.io/${OWNER}/fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
-          echo "✓ Pushed ghcr.io/${OWNER}/fieldtrack-backend:${{ steps.meta.outputs.sha_short }}"
+            fieldtrack-api:${{ steps.meta.outputs.sha_short }} \
+            ghcr.io/${OWNER}/api:${{ steps.meta.outputs.sha_short }}
+          docker push ghcr.io/${OWNER}/api:${{ steps.meta.outputs.sha_short }}
+          echo "✓ Pushed ghcr.io/${OWNER}/api:${{ steps.meta.outputs.sha_short }}"
 
       # Use the same pinned Trivy image to generate the SBOM — no additional
       # tool dependency, no unpinned action, same supply-chain guarantees.
       - name: Generate SBOM (CycloneDX)
         env:
-          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+          IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -513,7 +454,7 @@ jobs:
 
       - name: Save build provenance
         env:
-          IMAGE_NAME: fieldtrack-backend:${{ steps.meta.outputs.sha_short }}
+          IMAGE_NAME: fieldtrack-api:${{ steps.meta.outputs.sha_short }}
           IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
           echo "commit=${{ github.sha }}" > provenance.txt
@@ -541,11 +482,11 @@ jobs:
             echo "| Field | Value |"
             echo "|---|---|"
             echo "| Commit SHA | \`${{ github.sha }}\` |"
-            echo "| Image tag | \`fieldtrack-backend:${{ steps.meta.outputs.sha_short }}\` |"
+            echo "| Image tag | \`fieldtrack-api:${{ steps.meta.outputs.sha_short }}\` |"
             echo "| Image digest | \`${IMAGE_DIGEST}\` |"
             echo "| SBOM components | ${SBOM_COUNT} |"
             echo "| Trivy gate | HIGH,CRITICAL / exit-code 1 / ignore-unfixed |"
-            echo "| Registry | ghcr.io/${{ github.repository_owner }}/fieldtrack-backend |"
+            echo "| Registry | ghcr.io/${{ github.repository_owner }}/api |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
@@ -584,13 +525,13 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            export DEPLOY_ROOT="/api"
             cd "$DEPLOY_ROOT"
             git fetch origin
             git reset --hard origin/master
-            chmod +x apps/api/scripts/*.sh
+            chmod +x scripts/*.sh
             echo "=== Pre-deploy environment validation ==="
-            ./apps/api/scripts/validate-env.sh --check-monitoring
+            ./scripts/validate-env.sh --check-monitoring
             echo "✓ Environment contract validated"
 
       - name: Blue-Green deploy via SSH
@@ -602,11 +543,11 @@ jobs:
           script: |
             set -euo pipefail
             T0=$(date +%s)
-            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            export DEPLOY_ROOT="/api"
             cd "$DEPLOY_ROOT"
-            chmod +x apps/api/scripts/*.sh
+            chmod +x scripts/*.sh
             # Environment already validated in previous step
-            ./apps/api/scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
+            ./scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
             echo "✓ Deploy completed in $(($(date +%s) - T0))s"
 
       - name: Log deployment state (slot + SHA for debugging)
@@ -617,7 +558,7 @@ jobs:
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
-            ACTIVE_SLOT=$(cat /var/run/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            ACTIVE_SLOT=$(cat /var/run/api/active-slot 2>/dev/null || echo "unknown")
             DEPLOY_STATUS="UNKNOWN"
             
             # Check if health endpoint is responding (good sign of successful deploy)
@@ -648,33 +589,33 @@ jobs:
           script: |
             set -euo pipefail
             T0=$(date +%s)
-            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            export DEPLOY_ROOT="/api"
             INFRA_DIR="$DEPLOY_ROOT/infra"
-            NGINX_LIVE="/etc/nginx/sites-enabled/fieldtrack.conf"
-            ACTIVE_SLOT_FILE="/var/run/fieldtrack/active-slot"
+            NGINX_LIVE="/etc/nginx/sites-enabled/api.conf"
+            ACTIVE_SLOT_FILE="/var/run/api/active-slot"
 
             ACTIVE_SLOT=$(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo "blue")
             if [ "$ACTIVE_SLOT" = "green" ]; then BACKEND_PORT=3002; else BACKEND_PORT=3001; fi
 
-            # Load env from apps/api/.env — exports DEPLOY_ROOT, API_HOSTNAME, and all
+            # Load env from .env — exports DEPLOY_ROOT, API_HOSTNAME, and all
             # app variables. DEPLOY_ROOT is already exported above; load-env.sh uses it.
-            source "$DEPLOY_ROOT/apps/api/scripts/load-env.sh"
+            source "$DEPLOY_ROOT/scripts/load-env.sh"
 
             echo "✓ API_HOSTNAME:    $API_HOSTNAME"
 
             echo "=== Syncing Nginx (slot: $ACTIVE_SLOT, port: $BACKEND_PORT) ==="
-            sudo cp "$NGINX_LIVE" /tmp/fieldtrack.conf.bak 2>/dev/null || true
+            sudo cp "$NGINX_LIVE" /tmp/api.conf.bak 2>/dev/null || true
             NGINX_TMP=$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)
             sed \
               -e "s|__BACKEND_PORT__|$BACKEND_PORT|g" \
               -e "s|__API_HOSTNAME__|$API_HOSTNAME|g" \
-              "$INFRA_DIR/nginx/fieldtrack.conf" > "$NGINX_TMP"
+              "$INFRA_DIR/nginx/api.conf" > "$NGINX_TMP"
             sudo cp "$NGINX_TMP" "$NGINX_LIVE"
             rm -f "$NGINX_TMP"
 
             if ! sudo nginx -t 2>&1; then
               echo "Nginx test failed — restoring backup..."
-              sudo cp /tmp/fieldtrack.conf.bak "$NGINX_LIVE"
+              sudo cp /tmp/api.conf.bak "$NGINX_LIVE"
               exit 1
             fi
             sudo systemctl reload nginx
@@ -706,9 +647,9 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            export DEPLOY_ROOT="/api"
             cd "$DEPLOY_ROOT"
-            source apps/api/scripts/load-env.sh
+            source scripts/load-env.sh
             echo "=== Checking /health via VPS (API_HOSTNAME=$API_HOSTNAME) ==="
             for i in $(seq 1 30); do
               echo "---- Attempt $i ----"
@@ -738,9 +679,9 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            export DEPLOY_ROOT="/api"
             cd "$DEPLOY_ROOT"
-            source apps/api/scripts/load-env.sh
+            source scripts/load-env.sh
             echo "=== Final health check via public endpoint (API_HOSTNAME=$API_HOSTNAME) ==="
             for i in $(seq 1 10); do
               echo "---- Attempt $i ----"
@@ -772,8 +713,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          chmod +x apps/api/scripts/smoke-test.sh
-          ./apps/api/scripts/smoke-test.sh
+          chmod +x scripts/smoke-test.sh
+          ./scripts/smoke-test.sh
 
       - name: Upload smoke test report
         if: always()
@@ -830,11 +771,11 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            export DEPLOY_ROOT="/home/ashish/FieldTrack-2.0"
+            export DEPLOY_ROOT="/api"
             cd "$DEPLOY_ROOT"
-            chmod +x apps/api/scripts/*.sh
-            ./apps/api/scripts/rollback.sh --auto
+            chmod +x scripts/*.sh
+            ./scripts/rollback.sh --auto
             
             # Log final state
-            ACTIVE_SLOT=$(cat /var/run/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            ACTIVE_SLOT=$(cat /var/run/api/active-slot 2>/dev/null || echo "unknown")
             echo "ROLLBACK_COMPLETE | ACTIVE_SLOT=$ACTIVE_SLOT | SHA=${{ github.sha }}"

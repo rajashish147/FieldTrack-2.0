@@ -14,10 +14,10 @@ Fastify + TypeScript backend scaffold with JWT, structured logging, modular rout
 
 | File | Action | Purpose |
 |------|--------|---------|
-| [jwt.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/types/jwt.ts) | **NEW** | Zod v4 schema for JWT payload (`sub`, `role`, `organization_id`) |
-| [global.d.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/types/global.d.ts) | **MODIFIED** | Wires `JwtPayload` into Fastify types + adds `organizationId` to request |
-| [auth.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/middleware/auth.ts) | **MODIFIED** | JWT verify → Zod validate → attach tenant context (or 401) |
-| [tenant.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/utils/tenant.ts) | **NEW** | `enforceTenant()` — scopes any query to `request.organizationId` |
+| [jwt.ts](file:///d:/Codebase/api/apps/api/src/types/jwt.ts) | **NEW** | Zod v4 schema for JWT payload (`sub`, `role`, `organization_id`) |
+| [global.d.ts](file:///d:/Codebase/api/apps/api/src/types/global.d.ts) | **MODIFIED** | Wires `JwtPayload` into Fastify types + adds `organizationId` to request |
+| [auth.ts](file:///d:/Codebase/api/apps/api/src/middleware/auth.ts) | **MODIFIED** | JWT verify → Zod validate → attach tenant context (or 401) |
+| [tenant.ts](file:///d:/Codebase/api/apps/api/src/utils/tenant.ts) | **NEW** | `enforceTenant()` — scopes any query to `request.organizationId` |
 
 ### How Tenant Enforcement Works
 
@@ -71,14 +71,14 @@ flowchart LR
 
 | File | Layer | Purpose |
 |------|-------|---------|
-| [attendance.schema.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/modules/attendance/attendance.schema.ts) | Types | DB row type, Zod pagination schema, response interfaces |
-| [attendance.repository.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/modules/attendance/attendance.repository.ts) | Repository | Supabase queries — all scoped via `enforceTenant()` |
-| [attendance.service.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/modules/attendance/attendance.service.ts) | Service | Business rules: no duplicate check-in, no check-out without open session |
-| [attendance.controller.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/modules/attendance/attendance.controller.ts) | Controller | Extract request data, call service, return `{ success, data }` |
-| [attendance.routes.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/modules/attendance/attendance.routes.ts) | Routes | 4 endpoints with auth middleware, ADMIN guard on org-sessions |
-| [supabase.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/config/supabase.ts) | Config | Supabase client singleton (service role key) |
-| [role-guard.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/middleware/role-guard.ts) | Middleware | Reusable `requireRole()` factory — 403 on role mismatch |
-| [errors.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/utils/errors.ts) | Utils | Added `ForbiddenError` (403) |
+| [attendance.schema.ts](file:///d:/Codebase/api/apps/api/src/modules/attendance/attendance.schema.ts) | Types | DB row type, Zod pagination schema, response interfaces |
+| [attendance.repository.ts](file:///d:/Codebase/api/apps/api/src/modules/attendance/attendance.repository.ts) | Repository | Supabase queries — all scoped via `enforceTenant()` |
+| [attendance.service.ts](file:///d:/Codebase/api/apps/api/src/modules/attendance/attendance.service.ts) | Service | Business rules: no duplicate check-in, no check-out without open session |
+| [attendance.controller.ts](file:///d:/Codebase/api/apps/api/src/modules/attendance/attendance.controller.ts) | Controller | Extract request data, call service, return `{ success, data }` |
+| [attendance.routes.ts](file:///d:/Codebase/api/apps/api/src/modules/attendance/attendance.routes.ts) | Routes | 4 endpoints with auth middleware, ADMIN guard on org-sessions |
+| [supabase.ts](file:///d:/Codebase/api/apps/api/src/config/supabase.ts) | Config | Supabase client singleton (service role key) |
+| [role-guard.ts](file:///d:/Codebase/api/apps/api/src/middleware/role-guard.ts) | Middleware | Reusable `requireRole()` factory — 403 on role mismatch |
+| [errors.ts](file:///d:/Codebase/api/apps/api/src/utils/errors.ts) | Utils | Added `ForbiddenError` (403) |
 
 ### Endpoints
 
@@ -132,11 +132,11 @@ curl "http://localhost:3000/attendance/org-sessions?page=1&limit=20" \
 
 | File | Layer | Purpose |
 |------|-------|---------|
-| [locations.schema.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/modules/locations/locations.schema.ts) | Types | DB row type, Zod schema (`latitude`, `longitude`, `accuracy`, `recorded_at`), response interfaces |
-| [locations.repository.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/modules/locations/locations.repository.ts) | Repository | Supabase `createLocation` and `findLocationsBySession`, scoped via `enforceTenant()` |
-| [locations.service.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/modules/locations/locations.service.ts) | Service | Business rules: verify open attendance session before insertion |
-| [locations.controller.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/modules/locations/locations.controller.ts) | Controller | Extract request data, Zod payload validation, delegate to service, format responses |
-| [locations.routes.ts](file:///d:/Codebase/FieldTrack-2.0/apps/api/src/modules/locations/locations.routes.ts) | Routes | 2 endpoints, both restricted to `EMPLOYEE` via role guard |
+| [locations.schema.ts](file:///d:/Codebase/api/apps/api/src/modules/locations/locations.schema.ts) | Types | DB row type, Zod schema (`latitude`, `longitude`, `accuracy`, `recorded_at`), response interfaces |
+| [locations.repository.ts](file:///d:/Codebase/api/apps/api/src/modules/locations/locations.repository.ts) | Repository | Supabase `createLocation` and `findLocationsBySession`, scoped via `enforceTenant()` |
+| [locations.service.ts](file:///d:/Codebase/api/apps/api/src/modules/locations/locations.service.ts) | Service | Business rules: verify open attendance session before insertion |
+| [locations.controller.ts](file:///d:/Codebase/api/apps/api/src/modules/locations/locations.controller.ts) | Controller | Extract request data, Zod payload validation, delegate to service, format responses |
+| [locations.routes.ts](file:///d:/Codebase/api/apps/api/src/modules/locations/locations.routes.ts) | Routes | 2 endpoints, both restricted to `EMPLOYEE` via role guard |
 
 ### Endpoints
 
@@ -1826,7 +1826,7 @@ A single idempotent script provisions a fresh Ubuntu VPS from zero to production
 
 **File:** `infra/docker-compose.monitoring.yml`
 
-Five services on the `fieldtrack_network` Docker network:
+Five services on the `api_network` Docker network:
 
 | Service | Port | Role |
 |---------|------|------|
@@ -1905,7 +1905,7 @@ const exporter = new OTLPTraceExporter({
 });
 
 const sdk = new NodeSDK({
-  serviceName: "fieldtrack-backend",
+  serviceName: "fieldtrack-api",
   traceExporter: exporter,
   instrumentations: [
     getNodeAutoInstrumentations({
@@ -2433,4 +2433,4 @@ Any SHA from `.deploy_history` (or any valid GHCR tag) can be targeted directly.
 | Docker layer cache | `cache-from/to: type=gha` in `docker/build-push-action` |
 | Rollback requires 2+ deployments | Script exits with error if history is insufficient |
 | Rollback time | < 10 s (image already in GHCR) |
-| SHA tag on each image | `ghcr.io/.../fieldtrack-backend:<sha>` retained permanently |
+| SHA tag on each image | `ghcr.io/.../fieldtrack-api:<sha>` retained permanently |

@@ -46,7 +46,7 @@ jobs:
 
       - name: Update Dockerfile digests
         run: |
-          FILE="apps/api/Dockerfile"
+          FILE="Dockerfile"
           
           # Update node digest in Stage 1 (builder)
           sed -i "s|node:24.2.0-bookworm-slim@sha256:[a-f0-9]*|node:24.2.0-bookworm-slim@sha256:${{ steps.node-digest.outputs.digest }}|g" "$FILE"
@@ -63,13 +63,13 @@ jobs:
       - name: Check if digests changed
         id: changes
         run: |
-          if git diff --quiet apps/api/Dockerfile; then
+          if git diff --quiet Dockerfile; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "✓ Digests are already current"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "⚠ Base image digests have updated:"
-            git diff apps/api/Dockerfile
+            git diff Dockerfile
           fi
 
       - name: Create Pull Request

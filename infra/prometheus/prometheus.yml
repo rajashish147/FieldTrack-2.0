@@ -1,10 +1,10 @@
-# FieldTrack 2.0 — Prometheus Configuration
+# FieldTrack API \u2014 Prometheus Configuration
 #
-# All containers share fieldtrack_network, so we scrape by Docker service name.
+# All containers share api_network, so we scrape by Docker service name.
 #
 # Scrape targets:
-#   1. backend-blue  (port 3000 inside container, accessible as backend-blue:3000)
-#   2. backend-green (port 3000 inside container, accessible as backend-green:3000)
+#   1. api-blue  (port 3000 inside container, accessible as api-blue:3000)
+#   2. api-green (port 3000 inside container, accessible as api-green:3000)
 #   3. node-exporter (port 9100, accessible as node-exporter:9100)
 #   4. prometheus    (self-monitoring)
 #
@@ -30,7 +30,7 @@ alerting:
 
 scrape_configs:
   # ── Fastify Backend (Blue) ──────────────────────────────────────────────────
-  - job_name: "fieldtrack-backend-blue"
+  - job_name: "api-blue"
     scrape_protocols: [OpenMetricsText1.0.0, PrometheusText0.0.4]
     metrics_path: /metrics
     scrape_interval: 15s
@@ -38,7 +38,7 @@ scrape_configs:
       credentials: ${METRICS_SCRAPE_TOKEN}
     static_configs:
       - targets:
-          - "backend-blue:3000"
+          - "api-blue:3000"
         labels:
           app: "fieldtrack"
           component: "backend"
@@ -46,7 +46,7 @@ scrape_configs:
           slot: "blue"
 
   # ── Fastify Backend (Green) ─────────────────────────────────────────────────
-  - job_name: "fieldtrack-backend-green"
+  - job_name: "api-green"
     scrape_protocols: [OpenMetricsText1.0.0, PrometheusText0.0.4]
     metrics_path: /metrics
     scrape_interval: 15s
@@ -54,7 +54,7 @@ scrape_configs:
       credentials: ${METRICS_SCRAPE_TOKEN}
     static_configs:
       - targets:
-          - "backend-green:3000"
+          - "api-green:3000"
         labels:
           app: "fieldtrack"
           component: "backend"

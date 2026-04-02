@@ -145,8 +145,8 @@ All significant changes to FieldTrack 2.0 are documented here by development pha
 ## [Phase 13] — Production Infrastructure: VPS, Nginx & Monitoring Stack — 2026
 
 - Added `backend/scripts/vps-setup.sh` — idempotent VPS provisioning (Docker, Nginx, systemd, certbot, ufw)
-- Added `infra/nginx/fieldtrack.conf` — TLS termination, HTTP→HTTPS redirect, proxy headers, WebSocket upgrade, gzip
-- Added `infra/docker-compose.monitoring.yml` — Prometheus, Grafana, Loki, Promtail, Tempo on `fieldtrack_network`
+- Added `infra/nginx/api.conf` — TLS termination, HTTP→HTTPS redirect, proxy headers, WebSocket upgrade, gzip
+- Added `infra/docker-compose.monitoring.yml` — Prometheus, Grafana, Loki, Promtail, Tempo on `api_network`
 - Added `infra/grafana/dashboards/fieldtrack.json` — pre-built dashboard (HTTP rate, latency, queue depth, heap, Redis)
 - Added `infra/grafana/provisioning/` — auto-provisioned dashboard and Prometheus datasource
 - Added `infra/prometheus/alerts.yml` — alert rules for API latency, queue depth, Redis connectivity, host metrics

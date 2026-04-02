@@ -1,6 +1,6 @@
-# FieldTrack 2.0 — Monitoring Stack
+# FieldTrack API — Monitoring Stack
 #
-# All services use the shared fieldtrack_network.
+# All services use the shared api_network.
 # No public ports exposed — access via Nginx reverse proxy only.
 #
 # Usage: docker compose -f infra/docker-compose.monitoring.yml --env-file infra/.env.monitoring up -d
@@ -19,7 +19,7 @@ services:
       - ./loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
     command: -config.file=/etc/loki/local-config.yaml
     networks:
-      - fieldtrack_network
+      - api_network
     deploy:
       resources:
         limits:
@@ -47,7 +47,7 @@ services:
       - promtail_data:/data
     command: -config.file=/etc/promtail/promtail.yml
     networks:
-      - fieldtrack_network
+      - api_network
     deploy:
       resources:
         limits:
@@ -69,12 +69,7 @@ services:
     expose:
       - "9093"
     environment:
-      # SMTP and notification targets — set in infra/.env.monitoring
-      - ALERTMANAGER_SMTP_FROM=${ALERTMANAGER_SMTP_FROM}
-      - ALERTMANAGER_SMTP_HOST=${ALERTMANAGER_SMTP_HOST}
-      - ALERTMANAGER_SMTP_USER=${ALERTMANAGER_SMTP_USER}
-      - ALERTMANAGER_SMTP_PASSWORD=${ALERTMANAGER_SMTP_PASSWORD}
-      - ALERTMANAGER_NOTIFY_EMAIL=${ALERTMANAGER_NOTIFY_EMAIL}
+      - ALERTMANAGER_SLACK_WEBHOOK=${ALERTMANAGER_SLACK_WEBHOOK}
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
@@ -83,7 +78,7 @@ services:
       - "--storage.path=/alertmanager"
       - "--web.listen-address=:9093"
     networks:
-      - fieldtrack_network
+      - api_network
     deploy:
       resources:
         limits:
@@ -123,7 +118,7 @@ services:
       - "--enable-feature=exemplar-storage"
       - "--web.enable-remote-write-receiver"
     networks:
-      - fieldtrack_network
+      - api_network
     depends_on:
       alertmanager:
         condition: service_healthy
@@ -161,7 +156,7 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks:
-      - fieldtrack_network
+      - api_network
     deploy:
       resources:
         limits:
@@ -192,7 +187,7 @@ services:
     command:
       - "--config.file=/etc/blackbox/blackbox.yml"
     networks:
-      - fieldtrack_network
+      - api_network
     deploy:
       resources:
         limits:
@@ -213,7 +208,7 @@ services:
     image: prom/node-exporter:v1.8.1
     container_name: node-exporter
     restart: unless-stopped
-    # No public port — internal only via fieldtrack_network
+    # No public port — internal only via api_network
     expose:
       - "9100"
     volumes:
@@ -226,7 +221,7 @@ services:
       - "--path.rootfs=/rootfs"
       - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
     networks:
-      - fieldtrack_network
+      - api_network
     logging:
       driver: json-file
       options:
@@ -240,17 +235,17 @@ services:
 
 volumes:
   prometheus_data:
-    name: fieldtrack_prometheus_data
+    name: api_prometheus_data
   loki_data:
-    name: fieldtrack_loki_data
+    name: api_loki_data
   promtail_data:
-    name: fieldtrack_promtail_data
+    name: api_promtail_data
   grafana_data:
-    name: fieldtrack_grafana_data
+    name: api_grafana_data
   alertmanager_data:
-    name: fieldtrack_alertmanager_data
+    name: api_alertmanager_data
 
 networks:
-  fieldtrack_network:
-    name: fieldtrack_network
+  api_network:
+    name: api_network
     external: true

@@ -38,23 +38,15 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: '**/package-lock.json'
+          cache-dependency-path: package-lock.json
 
-      # ✅ Install ALL workspace deps
+      # ✅ Install ALL dependencies
       - name: Install dependencies
         run: npm ci
 
-      # ✅ Build shared packages first (important for TS resolution)
-      - name: Build shared packages
-        run: npm run build -w packages/types || true
-
       # ✅ Build API (critical for CodeQL flow analysis)
       - name: Build API
-        run: npm run build -w apps/api || true
-
-      # (optional but useful)
-      - name: Build Web
-        run: npm run build -w apps/web || true
+        run: npm run build || true
 
       # ✅ Initialize CodeQL AFTER dependencies
       - name: Initialize CodeQL

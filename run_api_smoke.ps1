@@ -1,5 +1,5 @@
 $ErrorActionPreference='Continue'
-$artifact='apps/api/dist/server.js'
+$artifact='dist/server.js'
 if (-not (Test-Path $artifact)) {
   Write-Output "ARTIFACT_MISSING:$artifact"
   exit 1

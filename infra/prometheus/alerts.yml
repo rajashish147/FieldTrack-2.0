@@ -7,25 +7,25 @@ groups:
 - name: fieldtrack_recording_rules
   rules:
   - record: fieldtrack:api_requests_rate_5m
-    expr: sum(rate(http_requests_total{job=~"fieldtrack-backend.*"}[5m]))
+    expr: sum(rate(http_requests_total{job=~"fieldtrack-api.*"}[5m]))
 
   - record: fieldtrack:api_errors_5xx_rate_5m
-    expr: sum(rate(http_requests_total{job=~"fieldtrack-backend.*",status_code=~"5.."}[5m]))
+    expr: sum(rate(http_requests_total{job=~"fieldtrack-api.*",status_code=~"5.."}[5m]))
 
   - record: fieldtrack:api_error_rate_5m
     expr: fieldtrack:api_errors_5xx_rate_5m / clamp_min(fieldtrack:api_requests_rate_5m, 1e-9)
 
   - record: fieldtrack:api_error_rate_1h
     expr: |
-      sum(rate(http_requests_total{job=~"fieldtrack-backend.*",status_code=~"5.."}[1h]))
+      sum(rate(http_requests_total{job=~"fieldtrack-api.*",status_code=~"5.."}[1h]))
       /
-      clamp_min(sum(rate(http_requests_total{job=~"fieldtrack-backend.*"}[1h])), 1e-9)
+      clamp_min(sum(rate(http_requests_total{job=~"fieldtrack-api.*"}[1h])), 1e-9)
 
   - record: fieldtrack:api_error_rate_6h
     expr: |
-      sum(rate(http_requests_total{job=~"fieldtrack-backend.*",status_code=~"5.."}[6h]))
+      sum(rate(http_requests_total{job=~"fieldtrack-api.*",status_code=~"5.."}[6h]))
       /
-      clamp_min(sum(rate(http_requests_total{job=~"fieldtrack-backend.*"}[6h])), 1e-9)
+      clamp_min(sum(rate(http_requests_total{job=~"fieldtrack-api.*"}[6h])), 1e-9)
 
   - record: fieldtrack:webhook_failure_rate_5m
     expr: |
@@ -36,9 +36,9 @@ groups:
   - record: fieldtrack:api_error_budget_remaining_30d
     expr: |
       1 - (
-        sum(increase(http_requests_total{job=~"fieldtrack-backend.*",status_code=~"5.."}[30d]))
+        sum(increase(http_requests_total{job=~"fieldtrack-api.*",status_code=~"5.."}[30d]))
         /
-        clamp_min(sum(increase(http_requests_total{job=~"fieldtrack-backend.*"}[30d])), 1)
+        clamp_min(sum(increase(http_requests_total{job=~"fieldtrack-api.*"}[30d])), 1)
       )
 
 # ---------------------------------------------------------
@@ -71,7 +71,7 @@ groups:
     expr: |
       histogram_quantile(
         0.95,
-        sum(rate(http_request_duration_seconds_bucket{job=~"fieldtrack-backend.*"}[5m])) by (le)
+        sum(rate(http_request_duration_seconds_bucket{job=~"fieldtrack-api.*"}[5m])) by (le)
       ) > 1
     for: 5m
     labels:
@@ -91,9 +91,9 @@ groups:
 
   - alert: FieldTrackAvgLatencyHigh
     expr: |
-      sum(rate(http_request_duration_seconds_sum{job=~"fieldtrack-backend.*"}[5m]))
+      sum(rate(http_request_duration_seconds_sum{job=~"fieldtrack-api.*"}[5m]))
       /
-      sum(rate(http_request_duration_seconds_count{job=~"fieldtrack-backend.*"}[5m]))
+      sum(rate(http_request_duration_seconds_count{job=~"fieldtrack-api.*"}[5m]))
       > 0.5
     for: 5m
     labels:
@@ -271,7 +271,7 @@ groups:
           5. Circuit-breaker state is DB-backed and survives Redis restart
 
   - alert: DeploymentFailure
-    expr: up{job=~"fieldtrack-backend.*"} == 0
+    expr: up{job=~"fieldtrack-api.*"} == 0
     for: 2m
     labels:
       severity: critical
@@ -537,7 +537,7 @@ groups:
     expr: |
       histogram_quantile(
         0.99,
-        sum(rate(http_request_duration_seconds_bucket{job=~"fieldtrack-backend.*"}[10m])) by (le)
+        sum(rate(http_request_duration_seconds_bucket{job=~"fieldtrack-api.*"}[10m])) by (le)
       ) > 2
     for: 10m
     labels:
