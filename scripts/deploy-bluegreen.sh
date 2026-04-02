@@ -63,6 +63,14 @@ trap '_ft_trap_err "$LINENO"' ERR
 _FT_STATE="INIT"
 DEPLOY_LOG_FILE="${DEPLOY_LOG_FILE:-/var/log/api/deploy.log}"
 
+# Ensure log directory exists with fallback to home directory
+LOG_DIR="$(dirname "$DEPLOY_LOG_FILE")"
+if ! mkdir -p "$LOG_DIR" 2>/dev/null; then
+    LOG_DIR="$HOME/api/logs"
+    DEPLOY_LOG_FILE="$LOG_DIR/deploy.log"
+    mkdir -p "$LOG_DIR"
+fi
+
 _ft_log() {
     { set +x; } 2>/dev/null
     local log_entry
