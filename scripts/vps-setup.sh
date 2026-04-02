@@ -26,7 +26,11 @@ GH_PAT=""                                   # GitHub Personal Access Token (pack
 DEPLOY_USER="ashish"                        # Non-root user for deployment
 DEPLOY_USER_SSH_PUBLIC_KEY=""               # Required public key for deploy user (ssh-ed25519 ...)
 REPO_URL="https://github.com/fieldtrack-tech/api.git"
-REPO_DIR="/api"
+DEPLOY_HOME="/home/${DEPLOY_USER}"
+DEPLOY_ROOT="${DEPLOY_ROOT:-${DEPLOY_HOME}/api}"
+REPO_DIR="$DEPLOY_ROOT"
+LEGACY_REPO_DIR="${DEPLOY_HOME}/FieldTrack-2.0"
+AUTO_CLEAN_LEGACY_REPO="${AUTO_CLEAN_LEGACY_REPO:-false}"
 NETWORK="api_network"
 NGINX_SITE_LINK="/etc/nginx/conf.d/api.conf"
 
@@ -236,6 +240,20 @@ log "Fail2Ban configured."
 # PHASE 8: Clone Repository
 # ============================================================================
 log "Phase 8: Cloning repository..."
+
+if [ -d "$LEGACY_REPO_DIR" ] && [ "$LEGACY_REPO_DIR" != "$REPO_DIR" ]; then
+    warn "Legacy deployment directory detected: $LEGACY_REPO_DIR"
+    if [ "$AUTO_CLEAN_LEGACY_REPO" = "true" ]; then
+        if [ -L "$LEGACY_REPO_DIR" ]; then
+            err "Refusing to remove symlinked legacy path: $LEGACY_REPO_DIR"
+        fi
+        rm -rf "$LEGACY_REPO_DIR"
+        log "Removed legacy deployment directory: $LEGACY_REPO_DIR"
+    else
+        warn "Leaving legacy directory untouched (AUTO_CLEAN_LEGACY_REPO=false)."
+        warn "Set AUTO_CLEAN_LEGACY_REPO=true to auto-remove $LEGACY_REPO_DIR"
+    fi
+fi
 
 if [ -d "$REPO_DIR" ]; then
     warn "Repository directory already exists, pulling latest..."

@@ -14,10 +14,10 @@ Fastify + TypeScript backend scaffold with JWT, structured logging, modular rout
 
 | File | Action | Purpose |
 |------|--------|---------|
-| [jwt.ts](file:///d:/Codebase/api/apps/api/src/types/jwt.ts) | **NEW** | Zod v4 schema for JWT payload (`sub`, `role`, `organization_id`) |
-| [global.d.ts](file:///d:/Codebase/api/apps/api/src/types/global.d.ts) | **MODIFIED** | Wires `JwtPayload` into Fastify types + adds `organizationId` to request |
-| [auth.ts](file:///d:/Codebase/api/apps/api/src/middleware/auth.ts) | **MODIFIED** | JWT verify → Zod validate → attach tenant context (or 401) |
-| [tenant.ts](file:///d:/Codebase/api/apps/api/src/utils/tenant.ts) | **NEW** | `enforceTenant()` — scopes any query to `request.organizationId` |
+| [jwt.ts](file:///d:/Codebase/api/src/types/jwt.ts) | **NEW** | Zod v4 schema for JWT payload (`sub`, `role`, `organization_id`) |
+| [global.d.ts](file:///d:/Codebase/api/src/types/global.d.ts) | **MODIFIED** | Wires `JwtPayload` into Fastify types + adds `organizationId` to request |
+| [auth.ts](file:///d:/Codebase/api/src/middleware/auth.ts) | **MODIFIED** | JWT verify → Zod validate → attach tenant context (or 401) |
+| [tenant.ts](file:///d:/Codebase/api/src/utils/tenant.ts) | **NEW** | `enforceTenant()` — scopes any query to `request.organizationId` |
 
 ### How Tenant Enforcement Works
 
@@ -71,14 +71,14 @@ flowchart LR
 
 | File | Layer | Purpose |
 |------|-------|---------|
-| [attendance.schema.ts](file:///d:/Codebase/api/apps/api/src/modules/attendance/attendance.schema.ts) | Types | DB row type, Zod pagination schema, response interfaces |
-| [attendance.repository.ts](file:///d:/Codebase/api/apps/api/src/modules/attendance/attendance.repository.ts) | Repository | Supabase queries — all scoped via `enforceTenant()` |
-| [attendance.service.ts](file:///d:/Codebase/api/apps/api/src/modules/attendance/attendance.service.ts) | Service | Business rules: no duplicate check-in, no check-out without open session |
-| [attendance.controller.ts](file:///d:/Codebase/api/apps/api/src/modules/attendance/attendance.controller.ts) | Controller | Extract request data, call service, return `{ success, data }` |
-| [attendance.routes.ts](file:///d:/Codebase/api/apps/api/src/modules/attendance/attendance.routes.ts) | Routes | 4 endpoints with auth middleware, ADMIN guard on org-sessions |
-| [supabase.ts](file:///d:/Codebase/api/apps/api/src/config/supabase.ts) | Config | Supabase client singleton (service role key) |
-| [role-guard.ts](file:///d:/Codebase/api/apps/api/src/middleware/role-guard.ts) | Middleware | Reusable `requireRole()` factory — 403 on role mismatch |
-| [errors.ts](file:///d:/Codebase/api/apps/api/src/utils/errors.ts) | Utils | Added `ForbiddenError` (403) |
+| [attendance.schema.ts](file:///d:/Codebase/api/src/modules/attendance/attendance.schema.ts) | Types | DB row type, Zod pagination schema, response interfaces |
+| [attendance.repository.ts](file:///d:/Codebase/api/src/modules/attendance/attendance.repository.ts) | Repository | Supabase queries — all scoped via `enforceTenant()` |
+| [attendance.service.ts](file:///d:/Codebase/api/src/modules/attendance/attendance.service.ts) | Service | Business rules: no duplicate check-in, no check-out without open session |
+| [attendance.controller.ts](file:///d:/Codebase/api/src/modules/attendance/attendance.controller.ts) | Controller | Extract request data, call service, return `{ success, data }` |
+| [attendance.routes.ts](file:///d:/Codebase/api/src/modules/attendance/attendance.routes.ts) | Routes | 4 endpoints with auth middleware, ADMIN guard on org-sessions |
+| [supabase.ts](file:///d:/Codebase/api/src/config/supabase.ts) | Config | Supabase client singleton (service role key) |
+| [role-guard.ts](file:///d:/Codebase/api/src/middleware/role-guard.ts) | Middleware | Reusable `requireRole()` factory — 403 on role mismatch |
+| [errors.ts](file:///d:/Codebase/api/src/utils/errors.ts) | Utils | Added `ForbiddenError` (403) |
 
 ### Endpoints
 
@@ -132,11 +132,11 @@ curl "http://localhost:3000/attendance/org-sessions?page=1&limit=20" \
 
 | File | Layer | Purpose |
 |------|-------|---------|
-| [locations.schema.ts](file:///d:/Codebase/api/apps/api/src/modules/locations/locations.schema.ts) | Types | DB row type, Zod schema (`latitude`, `longitude`, `accuracy`, `recorded_at`), response interfaces |
-| [locations.repository.ts](file:///d:/Codebase/api/apps/api/src/modules/locations/locations.repository.ts) | Repository | Supabase `createLocation` and `findLocationsBySession`, scoped via `enforceTenant()` |
-| [locations.service.ts](file:///d:/Codebase/api/apps/api/src/modules/locations/locations.service.ts) | Service | Business rules: verify open attendance session before insertion |
-| [locations.controller.ts](file:///d:/Codebase/api/apps/api/src/modules/locations/locations.controller.ts) | Controller | Extract request data, Zod payload validation, delegate to service, format responses |
-| [locations.routes.ts](file:///d:/Codebase/api/apps/api/src/modules/locations/locations.routes.ts) | Routes | 2 endpoints, both restricted to `EMPLOYEE` via role guard |
+| [locations.schema.ts](file:///d:/Codebase/api/src/modules/locations/locations.schema.ts) | Types | DB row type, Zod schema (`latitude`, `longitude`, `accuracy`, `recorded_at`), response interfaces |
+| [locations.repository.ts](file:///d:/Codebase/api/src/modules/locations/locations.repository.ts) | Repository | Supabase `createLocation` and `findLocationsBySession`, scoped via `enforceTenant()` |
+| [locations.service.ts](file:///d:/Codebase/api/src/modules/locations/locations.service.ts) | Service | Business rules: verify open attendance session before insertion |
+| [locations.controller.ts](file:///d:/Codebase/api/src/modules/locations/locations.controller.ts) | Controller | Extract request data, Zod payload validation, delegate to service, format responses |
+| [locations.routes.ts](file:///d:/Codebase/api/src/modules/locations/locations.routes.ts) | Routes | 2 endpoints, both restricted to `EMPLOYEE` via role guard |
 
 ### Endpoints
 
@@ -1308,7 +1308,7 @@ When `GITHUB_SHA` is absent (local dev, manual deploy), the value is `"manual"`.
 |------|--------|
 | `src/server.ts` | Added `SIGTERM`/`SIGINT` graceful shutdown handlers; added boot log marker with `GITHUB_SHA` |
 | `src/workers/distance.worker.ts` | Added `workerStarted` flag; `startDistanceWorker` returns `Worker \| null` and is idempotent |
-| `apps/api/Dockerfile` | Added `apk add curl`; added `HEALTHCHECK` directive |
+| `Dockerfile` | Added `apk add curl`; added `HEALTHCHECK` directive |
 
 ---
 
@@ -1589,15 +1589,15 @@ Phase 16 performed a clean database reset, replacing all `TEXT` columns that car
 | File | Action | Purpose |
 |------|--------|---------|
 | `supabase/migrations/20260309000000_phase16_schema.sql` | **NEW** | Full schema DDL with ENUM types, all 7 tables, indexes, RLS policies |
-| `apps/api/src/types/database.ts` | **REGENERATED** | Supabase-generated TypeScript types (removed from `.gitignore` so Docker can build) |
-| `apps/api/src/types/db.ts` | **NEW** | Human-readable type aliases — `AttendanceSession`, `Expense`, `GpsLocation`, etc. |
+| `src/types/database.ts` | **REGENERATED** | Supabase-generated TypeScript types (removed from `.gitignore` so Docker can build) |
+| `src/types/db.ts` | **NEW** | Human-readable type aliases — `AttendanceSession`, `Expense`, `GpsLocation`, etc. |
 | Attendance / expenses / locations / analytics schema files | **UPDATED** | Import row types from `db.ts` instead of long `Database["public"]["Tables"][...]["Row"]` paths |
 
 ### Migration Steps
 
 ```
 supabase db reset --linked --yes
-supabase gen types typescript --linked > apps/api/src/types/database.ts
+supabase gen types typescript --linked > src/types/database.ts
 ```
 
 ---
@@ -1794,7 +1794,7 @@ Phase 13 moved FieldTrack 2.0 from a locally-runnable service to a fully operati
 
 ### 13.1 — VPS Setup Script
 
-**File:** `apps/api/scripts/vps-setup.sh`
+**File:** `scripts/vps-setup.sh`
 
 A single idempotent script provisions a fresh Ubuntu VPS from zero to production-ready:
 
@@ -1810,7 +1810,7 @@ A single idempotent script provisions a fresh Ubuntu VPS from zero to production
 
 ### 13.2 — Nginx Reverse Proxy
 
-**File:** `infra/nginx/fieldtrack.conf`
+**File:** `infra/nginx/api.conf`
 
 - Terminates TLS (HTTPS → HTTP to backend containers)
 - Upstream block points to the active blue/green container port
@@ -1859,12 +1859,12 @@ Dashboard is automatically loaded on container start via `infra/grafana/provisio
 
 | File | Purpose |
 |------|----------|
-| `apps/api/scripts/vps-setup.sh` | Full VPS provisioning from scratch |
+| `scripts/vps-setup.sh` | Full VPS provisioning from scratch |
 | `infra/docker-compose.monitoring.yml` | Prometheus, Grafana, Loki, Promtail, Tempo |
 | `infra/grafana/dashboards/fieldtrack.json` | Application dashboard (auto-provisioned) |
 | `infra/grafana/provisioning/dashboards/dashboard.yml` | Dashboard provisioning config |
 | `infra/grafana/provisioning/datasources/prometheus.yml` | Prometheus datasource provisioning |
-| `infra/nginx/fieldtrack.conf` | Nginx reverse proxy and TLS termination |
+| `infra/nginx/api.conf` | Nginx reverse proxy and TLS termination |
 | `infra/prometheus/prometheus.yml` | Scrape config targeting backend `/metrics` |
 
 ---
@@ -1890,7 +1890,7 @@ Phase 14 connected the three pillars of observability — **metrics**, **logs**,
 
 ### 14.1 — OpenTelemetry Tracing
 
-**File:** `apps/api/src/tracing.ts`
+**File:** `src/tracing.ts`
 
 Must be the **first import in `server.ts`** so the SDK wraps all subsequently-loaded modules.
 
@@ -1923,7 +1923,7 @@ Every HTTP request, BullMQ job, and Supabase query produces a span automatically
 
 ### 14.2 — Pino Log Correlation
 
-**File:** `apps/api/src/config/logger.ts`
+**File:** `src/config/logger.ts`
 
 An `otelMixin` function injects the active trace's `trace_id`, `span_id`, and `trace_flags` into **every Pino log line** as top-level fields:
 
@@ -1948,7 +1948,7 @@ When no active span exists (background workers, startup), the mixin returns `{}`
 
 ### 14.3 — Prometheus Exemplars
 
-**File:** `apps/api/src/plugins/prometheus.ts`
+**File:** `src/plugins/prometheus.ts`
 
 The `http_request_duration_seconds` histogram is upgraded to attach trace IDs as exemplars to each observation:
 
@@ -1971,13 +1971,13 @@ Infrastructure requirements enabled in `docker-compose.monitoring.yml`:
 
 | File | Action |
 |------|--------|
-| `apps/api/src/tracing.ts` | **NEW** — OpenTelemetry SDK bootstrap; OTLP exporter to Tempo |
-| `apps/api/src/server.ts` | **MODIFIED** — `import "./tracing.js"` as the very first import |
-| `apps/api/src/config/logger.ts` | **MODIFIED** — `otelMixin` injects trace/span IDs into every log line |
-| `apps/api/src/plugins/prometheus.ts` | **MODIFIED** — exemplar support on duration histogram |
+| `src/tracing.ts` | **NEW** — OpenTelemetry SDK bootstrap; OTLP exporter to Tempo |
+| `src/server.ts` | **MODIFIED** — `import "./tracing.js"` as the very first import |
+| `src/config/logger.ts` | **MODIFIED** — `otelMixin` injects trace/span IDs into every log line |
+| `src/plugins/prometheus.ts` | **MODIFIED** — exemplar support on duration histogram |
 | `infra/docker-compose.monitoring.yml` | **MODIFIED** — Tempo OTLP ports 4317/4318; Prometheus exemplar storage |
 | `infra/prometheus/prometheus.yml` | **MODIFIED** — OpenMetrics scrape protocol for backend jobs |
-| `apps/api/src/app.ts` | **MODIFIED** — `onRequest` hook enriches active span with route pattern and request ID |
+| `src/app.ts` | **MODIFIED** — `onRequest` hook enriches active span with route pattern and request ID |
 
 ---
 
@@ -2372,7 +2372,7 @@ The pipeline is split into two jobs:
 
 ### Multi-Version Rollback System
 
-**Files:** `apps/api/scripts/deploy-bluegreen.sh`, `apps/api/scripts/rollback.sh`
+**Files:** `scripts/deploy-bluegreen.sh`, `scripts/rollback.sh`
 
 #### Deployment History
 
@@ -2415,9 +2415,9 @@ Any SHA from `.deploy_history` (or any valid GHCR tag) can be targeted directly.
 | File | Action |
 |------|--------|
 | `.github/workflows/deploy.yml` | **MODIFIED** — Split into `test` + `build-and-deploy` jobs; `npm ci`; `tsc --noEmit`; GHA cache |
-| `apps/api/scripts/deploy-bluegreen.sh` | **MODIFIED** — Appends SHA to `.deploy_history`; maintains 5-entry window |
-| `apps/api/scripts/rollback.sh` | **NEW** — Reads history, confirms, re-deploys previous image |
-| `apps/api/.gitignore` | **MODIFIED** — `.deploy_history` excluded |
+| `scripts/deploy-bluegreen.sh` | **MODIFIED** — Appends SHA to `.deploy_history`; maintains 5-entry window |
+| `scripts/rollback.sh` | **NEW** — Reads history, confirms, re-deploys previous image |
+| `.gitignore` | **MODIFIED** — `.deploy_history` excluded |
 | `docs/ROLLBACK_SYSTEM.md` | **NEW** — Architecture, usage, troubleshooting guide |
 | `docs/ROLLBACK_QUICKREF.md` | **NEW** — Fast reference card for operators |
 

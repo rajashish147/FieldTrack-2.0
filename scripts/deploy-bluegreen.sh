@@ -153,7 +153,9 @@ APP_PORT=3000
 NETWORK="api_network"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+[ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+REPO_DIR="$DEPLOY_ROOT"
 
 # Slot state directory and file.
 # /var/run/api/ is chosen over /tmp (world-writable, cleaned by tmpwatch)

@@ -93,7 +93,7 @@ header "Forbidden variable check (API_DOMAIN)"
 # Hard error: API_DOMAIN assignment must not appear ANYWHERE in the repository.
 # Repository-wide scan (excluding node_modules) to catch drift across scripts
 # and generated env files, not only the two primary env files.
-if grep -r "API_DOMAIN" . --exclude-dir=node_modules 2>/dev/null | grep -E "API_DOMAIN[[:space:]]*="; then
+if grep -r "API_DOMAIN" "$REPO_ROOT" --exclude-dir=node_modules 2>/dev/null | grep -E "API_DOMAIN[[:space:]]*="; then
     fail "API_DOMAIN assignment found in repository — this variable has been REMOVED"
     fail "  Replace with: API_BASE_URL=https://your-domain.com (in .env)"
     fail "                API_HOSTNAME=your-domain.com (in infra/.env.monitoring)"

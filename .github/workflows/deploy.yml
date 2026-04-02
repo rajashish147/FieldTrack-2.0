@@ -525,7 +525,13 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            export DEPLOY_ROOT="/api"
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            echo "USER=$(whoami)"
+            echo "HOME=$HOME"
+            echo "PWD=$(pwd)"
+            ls -la "$HOME"
+            ls -la "$HOME/api"
+            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             git fetch origin
             git reset --hard origin/master
@@ -543,7 +549,14 @@ jobs:
           script: |
             set -euo pipefail
             T0=$(date +%s)
-            export DEPLOY_ROOT="/api"
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            echo "USER=$(whoami)"
+            echo "HOME=$HOME"
+            echo "PWD=$(pwd)"
+            ls -la "$HOME"
+            ls -la "$HOME/api"
+            ls -la "$DEPLOY_ROOT"
+            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             chmod +x scripts/*.sh
             # Environment already validated in previous step
@@ -589,7 +602,14 @@ jobs:
           script: |
             set -euo pipefail
             T0=$(date +%s)
-            export DEPLOY_ROOT="/api"
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            echo "USER=$(whoami)"
+            echo "HOME=$HOME"
+            echo "PWD=$(pwd)"
+            ls -la "$HOME"
+            ls -la "$HOME/api"
+            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            cd "$DEPLOY_ROOT"
             INFRA_DIR="$DEPLOY_ROOT/infra"
             NGINX_LIVE="/etc/nginx/sites-enabled/api.conf"
             ACTIVE_SLOT_FILE="/var/run/api/active-slot"
@@ -647,7 +667,8 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            export DEPLOY_ROOT="/api"
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             source scripts/load-env.sh
             echo "=== Checking /health via VPS (API_HOSTNAME=$API_HOSTNAME) ==="
@@ -679,7 +700,8 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            export DEPLOY_ROOT="/api"
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             source scripts/load-env.sh
             echo "=== Final health check via public endpoint (API_HOSTNAME=$API_HOSTNAME) ==="
@@ -771,7 +793,13 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
             set -euo pipefail
-            export DEPLOY_ROOT="/api"
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            echo "USER=$(whoami)"
+            echo "HOME=$HOME"
+            echo "PWD=$(pwd)"
+            ls -la "$HOME"
+            ls -la "$HOME/api"
+            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             chmod +x scripts/*.sh
             ./scripts/rollback.sh --auto

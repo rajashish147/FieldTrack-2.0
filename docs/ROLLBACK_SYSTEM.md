@@ -62,7 +62,7 @@ The history is maintained using a rolling window:
 Deploy the latest image from CI:
 
 ```bash
-cd /api
+cd "$HOME/api"
 ./scripts/deploy-bluegreen.sh a4f91c2
 ```
 
@@ -71,7 +71,7 @@ cd /api
 Instantly restore the last working deployment:
 
 ```bash
-cd /api
+cd "$HOME/api"
 ./scripts/rollback.sh
 ```
 
@@ -184,7 +184,7 @@ sudo systemctl reload nginx # Reload only if valid
 - name: Deploy to VPS
   run: |
     ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-      "cd /api && \
+      "cd \"$HOME/api\" && \
        ./scripts/deploy-bluegreen.sh ${{ env.SHA_SHORT }}"
 ```
 
@@ -204,7 +204,7 @@ The history maintains the last 5 deployments in chronological order (newest firs
 ## File Locations
 
 ```
-/api/
+$HOME/api/
 ├── scripts/
 │   ├── deploy-bluegreen.sh    # Blue-green deployment
 │   └── rollback.sh             # Rollback automation
@@ -225,7 +225,7 @@ chmod +x scripts/rollback.sh
 
 ```
 ERROR: No deployment history found.
-File not found: /api/.deploy_history
+File not found: $HOME/api/.deploy_history
 ```
 
 **Solution:** Deploy at least once before attempting rollback.

@@ -4,13 +4,13 @@
 
 ### Deploy Latest Version
 ```bash
-cd /api
+cd "$HOME/api"
 ./scripts/deploy-bluegreen.sh <SHA>
 ```
 
 ### Rollback to Previous Version
 ```bash
-cd /api
+cd "$HOME/api"
 ./scripts/rollback.sh
 ```
 

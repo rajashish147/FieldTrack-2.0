@@ -25,8 +25,18 @@ _LES_REPO="$(cd "$_LES_DIR/.." && pwd)"
 
 # ── DEPLOY_ROOT ─────────────────────────────────────────────────────────────
 # Prefer an already-exported value (e.g. set explicitly by the CI SSH step);
-# fall back to the path inferred from this script's own location on the VPS.
-export DEPLOY_ROOT="${DEPLOY_ROOT:-$_LES_REPO}"
+# default to the canonical VPS deployment path under the current user's home.
+export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+
+[ -d "$DEPLOY_ROOT" ] || {
+    echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"
+    echo "   Expected repository root at: $HOME/api"
+    echo "   If your repo is elsewhere, export DEPLOY_ROOT before running scripts."
+    if [ -d "$_LES_REPO" ]; then
+        echo "   Detected script-relative repo candidate: $_LES_REPO"
+    fi
+    exit 1
+}
 
 # ── ENV_FILE ─────────────────────────────────────────────────────────────────
 export ENV_FILE="$DEPLOY_ROOT/.env"

@@ -288,7 +288,7 @@ Nginx references LetsEncrypt certificates at `/etc/letsencrypt/live/<API_HOSTNAM
    sed \
      -e "s|__BACKEND_PORT__|3001|g" \
      -e "s|__API_HOSTNAME__|$API_HOSTNAME|g" \
-     infra/nginx/fieldtrack.conf | sudo tee /etc/nginx/sites-enabled/fieldtrack.conf
+     infra/nginx/api.conf | sudo tee /etc/nginx/sites-enabled/api.conf
    sudo nginx -t && sudo systemctl reload nginx
    ```
 

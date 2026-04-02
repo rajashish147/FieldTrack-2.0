@@ -70,18 +70,18 @@ DROP TABLE IF EXISTS public.employee_last_state       CASCADE;
 --
 --   git revert <commit-sha-of-feat1>
 --   # or
---   git checkout <previous-sha> -- apps/api/src/workers/snapshot.queue.ts
---   git checkout <previous-sha> -- apps/api/src/workers/snapshot.worker.ts
---   git checkout <previous-sha> -- apps/api/src/workers/startup.ts
---   git checkout <previous-sha> -- apps/api/src/modules/attendance/attendance.service.ts
---   git checkout <previous-sha> -- apps/api/src/modules/locations/locations.service.ts
---   git checkout <previous-sha> -- apps/api/src/modules/expenses/expenses.service.ts
---   git checkout <previous-sha> -- apps/api/src/modules/expenses/expenses.controller.ts
---   git checkout <previous-sha> -- apps/api/src/modules/expenses/expenses.repository.ts
---   git checkout <previous-sha> -- apps/api/src/modules/employees/employees.repository.ts
---   git checkout <previous-sha> -- apps/api/src/modules/employees/employees.controller.ts
---   git checkout <previous-sha> -- apps/api/src/modules/profile/profile.repository.ts
---   git checkout <previous-sha> -- apps/api/src/modules/profile/profile.service.ts
+--   git checkout <previous-sha> -- src/workers/snapshot.queue.ts
+--   git checkout <previous-sha> -- src/workers/snapshot.worker.ts
+--   git checkout <previous-sha> -- src/workers/startup.ts
+--   git checkout <previous-sha> -- src/modules/attendance/attendance.service.ts
+--   git checkout <previous-sha> -- src/modules/locations/locations.service.ts
+--   git checkout <previous-sha> -- src/modules/expenses/expenses.service.ts
+--   git checkout <previous-sha> -- src/modules/expenses/expenses.controller.ts
+--   git checkout <previous-sha> -- src/modules/expenses/expenses.repository.ts
+--   git checkout <previous-sha> -- src/modules/employees/employees.repository.ts
+--   git checkout <previous-sha> -- src/modules/employees/employees.controller.ts
+--   git checkout <previous-sha> -- src/modules/profile/profile.repository.ts
+--   git checkout <previous-sha> -- src/modules/profile/profile.service.ts
 --
 -- The BullMQ "snapshot-engine" queue in Redis will drain naturally.
 -- Any jobs still in the queue when workers are stopped can be safely

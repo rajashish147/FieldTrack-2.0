@@ -26,7 +26,7 @@ const MAX_SSE_CONNECTIONS_PER_ORG = 20;
  * keep the connection alive through proxies and load balancers.
  *
  * Auth: ADMIN only.
- * Nginx: requires `proxy_buffering off` — already configured in fieldtrack.conf.
+ * Nginx: requires `proxy_buffering off` — already configured in infra/nginx/api.conf.
  * Limit: max 20 concurrent connections per org (M4 — FD exhaustion protection).
  */
 export async function eventsRoutes(app: FastifyInstance): Promise<void> {
