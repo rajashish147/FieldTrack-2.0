@@ -42,6 +42,31 @@ jobs:
     timeout-minutes: 15
     if: always()
     env:
+      # ── CI non-secret defaults (previously in apps/api/.env.ci) ─────────────────
+      CONFIG_VERSION: "1"
+      APP_ENV: ci
+      NODE_ENV: production
+      PORT: "3000"
+      APP_BASE_URL: http://localhost:3000
+      API_BASE_URL: http://localhost:3000
+      FRONTEND_BASE_URL: http://localhost:3000
+      CORS_ORIGIN: http://localhost:3000
+      REDIS_URL: redis://invalid-ci-host:6379
+      WORKERS_ENABLED: "false"
+      METRICS_SCRAPE_TOKEN: dummy
+      SERVICE_NAME: fieldtrack-api-ci
+      BODY_LIMIT_BYTES: "1000000"
+      REQUEST_TIMEOUT_MS: "30000"
+      MAX_QUEUE_DEPTH: "1000"
+      MAX_POINTS_PER_SESSION: "50000"
+      MAX_SESSION_DURATION_HOURS: "168"
+      WORKER_CONCURRENCY: "1"
+      ANALYTICS_WORKER_CONCURRENCY: "5"
+      WEBHOOK_WORKER_CONCURRENCY: "5"
+      WEBHOOK_DLQ_MAX_SIZE: "10000"
+      WEBHOOK_DLQ_RETENTION_DAYS: "30"
+      WEBHOOK_MAX_PAYLOAD_BYTES: "262144"
+      # ── Supabase — GitHub Secrets only ─────────────────────────────────────────
       SUPABASE_URL: ${{ secrets.SUPABASE_URL_TEST }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY_TEST }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_TEST }}
@@ -122,10 +147,32 @@ jobs:
           docker run -d \
             --name api-ci-test \
             -p 127.0.0.1:3001:3000 \
-            --env-file apps/api/.env.ci \
-            -e SUPABASE_URL=${{ secrets.SUPABASE_URL_TEST }} \
-            -e SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY_TEST }} \
-            -e SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY_TEST }} \
+            -e CONFIG_VERSION \
+            -e APP_ENV \
+            -e NODE_ENV \
+            -e PORT \
+            -e APP_BASE_URL \
+            -e API_BASE_URL \
+            -e FRONTEND_BASE_URL \
+            -e CORS_ORIGIN \
+            -e REDIS_URL \
+            -e WORKERS_ENABLED \
+            -e METRICS_SCRAPE_TOKEN \
+            -e SERVICE_NAME \
+            -e BODY_LIMIT_BYTES \
+            -e REQUEST_TIMEOUT_MS \
+            -e MAX_QUEUE_DEPTH \
+            -e MAX_POINTS_PER_SESSION \
+            -e MAX_SESSION_DURATION_HOURS \
+            -e WORKER_CONCURRENCY \
+            -e ANALYTICS_WORKER_CONCURRENCY \
+            -e WEBHOOK_WORKER_CONCURRENCY \
+            -e WEBHOOK_DLQ_MAX_SIZE \
+            -e WEBHOOK_DLQ_RETENTION_DAYS \
+            -e WEBHOOK_MAX_PAYLOAD_BYTES \
+            -e SUPABASE_URL \
+            -e SUPABASE_ANON_KEY \
+            -e SUPABASE_SERVICE_ROLE_KEY \
             fieldtrack-api:ci-validation
 
           STATUS="000"

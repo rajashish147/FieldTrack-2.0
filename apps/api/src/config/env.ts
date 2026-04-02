@@ -1,7 +1,7 @@
 // ⚠️  DO NOT add env variables without updating ALL of the following:
-//   - apps/api/.env.example          (developer template — every variable must appear here)
-//   - apps/api/.env.ci               (CI non-secret defaults, if the variable is CI-relevant)
-//   - docs/env-contract.md           (source-of-truth documentation table)
+//   - apps/api/.env.example             (developer template — every variable must appear here)
+//   - .github/workflows/pr.yml          (CI env: block — non-secret defaults for container bootstrap)
+//   - docs/env-contract.md              (source-of-truth documentation table)
 //   - apps/api/scripts/validate-env.sh  (if monitoring-layer or cross-file validation needed)
 //
 // Failure to keep these in sync causes config drift, silent CI failures, and
