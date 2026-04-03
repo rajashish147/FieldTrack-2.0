@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import type { JwtPayload as JoseJwtPayload } from "jsonwebtoken";
 import { env } from "../config/env.js";
 
-const { verify } = jwt;
+const { verify, decode } = jwt;
 
 /**
  * JWKS client for fetching Supabase signing keys.
@@ -11,22 +11,38 @@ const { verify } = jwt;
  * Supabase signs JWTs using ES256 (asymmetric) and rotates keys periodically.
  * This client fetches the public keys from Supabase's JWKS endpoint and caches them.
  * 
+ * Caching strategy:
+ * - Reduces external JWKS endpoint calls (performance + stability)
+ * - 5 concurrent keys cached (typical for Supabase key rotation)
+ * - 10-minute TTL (allows key rotation to propagate)
+ * 
  * Phase 20: Authentication Layer Fix
  */
 const client = jwksClient({
   jwksUri: `${env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`,
-  cache: true,
-  cacheMaxEntries: 5,
-  cacheMaxAge: 600000, // 10 minutes
+  cache: true,              // Enable in-memory caching
+  cacheMaxEntries: 5,       // Hold up to 5 keys in memory
+  cacheMaxAge: 600000,      // 10 minutes; allows key rotation to propagate
 });
 
 /**
  * Fetches the signing key for a given JWT.
  * Called automatically by jsonwebtoken during verification.
+ * 
+ * @param header - JWT header (must include 'kid' for JWKS lookup)
+ * @param callback - callback(err, key)
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const getKey = (header: any, callback: any): void => {
-  client.getSigningKey((header as Record<string, string>).kid, (err, key) => {
+  const kid = (header as Record<string, string>).kid;
+  
+  // Fail fast if kid is missing — prevents falling back to cached key or default key
+  if (!kid) {
+    callback(new Error("JWT missing 'kid' header — cannot look up JWKS key"));
+    return;
+  }
+  
+  client.getSigningKey(kid, (err, key) => {
     if (err) {
       callback(err);
       return;
@@ -72,11 +88,20 @@ export interface SupabaseJwtPayload extends JoseJwtPayload {
 /**
  * Layer 1 — Token Verification
  * 
- * Verifies a Supabase JWT token using JWKS.
+ * Verifies a Supabase JWT token using JWKS with asymmetric ES256 keys.
+ * 
+ * Security hardening (prevents algorithm confusion attacks + key confusion):
+ * - JWKS endpoint provides Supabase's public keys only (asymmetric)
+ * - Verification explicitly restricts algorithms to ["ES256"] (no HS256 fallback)
+ * - Audience must be "authenticated" (blocks service_role and anon tokens)
+ * - Issuer must EXACTLY match Supabase auth endpoint (no trailing slash tricks)
+ * - Key ID (kid) is REQUIRED in JWT header; missing kid fails immediately
+ * - Header algorithm is validated using jsonwebtoken.decode() (safe base64url handling)
+ * - Clock tolerance of 5 seconds handles minor server time drift
  * 
  * Responsibilities:
- * - Verify JWT signature using Supabase's public keys
- * - Validate token structure and claims
+ * - Verify JWT signature using Supabase's public keys via JWKS
+ * - Validate token structure and all required claims
  * - Return decoded payload
  * 
  * Does NOT:
@@ -92,19 +117,46 @@ export interface SupabaseJwtPayload extends JoseJwtPayload {
  * 
  * @param token - The JWT token to verify
  * @returns Decoded and verified payload
- * @throws Error if token is invalid or verification fails
+ * @throws Error if token is invalid, signature doesn't match, or verification fails
  */
 export async function verifySupabaseToken(
   token: string
 ): Promise<SupabaseJwtPayload> {
   return new Promise((resolve, reject) => {
+    // Defensive Step 1: Decode header safely using jsonwebtoken.decode()
+    // This handles base64url decoding properly (safer than manual Buffer.from parsing)
+    const decodedWithHeader = decode(token, { complete: true });
+    
+    if (!decodedWithHeader || typeof decodedWithHeader === "string") {
+      reject(new Error("Invalid JWT format"));
+      return;
+    }
+    
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const header = decodedWithHeader.header as any;
+    
+    // Defensive Step 2: Validate algorithm in header (before signature verification)
+    if (header.alg !== "ES256") {
+      reject(new Error(`Algorithm mismatch: expected 'ES256', got '${String(header.alg)}'`));
+      return;
+    }
+    
+    // Defensive Step 3: Enforce key ID (kid) presence
+    // kid is essential for JWKS lookup; missing kid prevents verification
+    if (!header.kid) {
+      reject(new Error("JWT missing 'kid' header — cannot verify without key ID"));
+      return;
+    }
+    
+    // Step 4: Verify signature using JWKS (via getKey callback)
     verify(
       token,
       getKey,
       {
-        algorithms: ["ES256"], // Supabase uses ES256
-        audience: "authenticated", // Only accept user tokens
-        issuer: `${env.SUPABASE_URL}/auth/v1`,
+        algorithms: ["ES256"],                    // CRITICAL: Restrict to ES256 only
+        audience: "authenticated",                // Blocks service_role, anon tokens
+        issuer: `${env.SUPABASE_URL}/auth/v1`,   // EXACT match (no trailing slash tricks)
+        clockTolerance: 5,                        // 5s tolerance for minor time drift
       },
       (err, decoded) => {
         if (err) {

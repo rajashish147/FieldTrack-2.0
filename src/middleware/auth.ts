@@ -34,6 +34,7 @@ export async function authenticate(
         const token = authHeader.substring(7);
 
         // Verify ES256 signature via Supabase JWKS endpoint.
+        // jwtVerifier enforces: ES256 algorithm, kid presence, audience, issuer, and clock tolerance.
         const decoded = await verifySupabaseToken(token);
 
         const userId = decoded.sub;

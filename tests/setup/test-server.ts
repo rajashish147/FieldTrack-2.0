@@ -3,6 +3,14 @@
  *
  * Registers:
  *  - @fastify/jwt (using the test secret from env)
+ *    SECURITY NOTE: @fastify/jwt depends on vulnerable fast-jwt (CVE-2023-48223).
+ *    This is safe here because:
+ *    - It's test-only, not used in production
+ *    - Test tokens use HS256 (symmetric); CVE-2023-48223 is about symmetric/asymmetric confusion
+ *    - Test environment uses a hardcoded secret, not JWKS
+ *    - Production verification uses jsonwebtoken + JWKS (completely different library);
+ *      see verifySupabaseToken in src/auth/jwtVerifier.ts
+ *    See SECURITY.md for full reasoning.
  *  - global error handler (mirrors app.ts)
  *  - all application routes
  *
