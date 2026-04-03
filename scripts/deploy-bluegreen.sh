@@ -51,7 +51,10 @@
 #
 # =============================================================================
 set -euo pipefail
-set -x
+# Enable explicit debugging when DEBUG=true, otherwise suppress xtrace
+if [ "${DEBUG:-false}" = "true" ]; then
+  set -x
+fi
 trap '_ft_trap_err "$LINENO"' ERR
 
 # ---------------------------------------------------------------------------
@@ -74,23 +77,97 @@ fi
 _ft_log() {
     { set +x; } 2>/dev/null
     local log_entry
-    log_entry=$(printf '[DEPLOY] ts=%s state=%s %s' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$*")
+    log_entry=$(printf '[DEPLOY] deploy_id=%s ts=%s state=%s %s' "$DEPLOY_ID" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$*")
     printf '%s\n' "$log_entry" | tee -a "$DEPLOY_LOG_FILE" >&2
-    set -x
+    if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
 }
 
 _ft_state() {
     { set +x; } 2>/dev/null
     _FT_STATE="$1"; shift
-    printf '[DEPLOY] ts=%s state=%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$*" >&2
-    set -x
+    printf '[DEPLOY] deploy_id=%s ts=%s state=%s %s\n' "$DEPLOY_ID" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$*" >&2
+    if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
 }
 
 _ft_trap_err() {
     { set +x; } 2>/dev/null
-    printf '[DEPLOY] ts=%s state=%s level=ERROR msg="unexpected failure at line %s"\n' \
-        "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$1" >&2
-    set -x
+    printf '[ERROR] deploy_id=%s ts=%s state=%s msg="unexpected failure at line %s"\n' \
+        "$DEPLOY_ID" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$1" >&2
+    if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
+}
+
+# ---------------------------------------------------------------------------
+# ERROR HELPER -- [ERROR]-prefixed log for failure paths
+# ---------------------------------------------------------------------------
+_ft_error() {
+    { set +x; } 2>/dev/null
+    local log_entry
+    log_entry=$(printf '[ERROR] deploy_id=%s ts=%s state=%s %s' "$DEPLOY_ID" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$*")
+    printf '%s\n' "$log_entry" | tee -a "$DEPLOY_LOG_FILE" >&2
+    if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
+}
+
+# ---------------------------------------------------------------------------
+# PHASE TIMING HELPER -- wrap phases to measure wall-clock duration
+# Usage:
+#   _ft_phase_start "PHASE_NAME"
+#   ... phase work ...
+#   _ft_phase_end "PHASE_NAME"
+# ---------------------------------------------------------------------------
+_ft_phase_start() {
+    eval "_${1}_START=\$(date +%s)"
+}
+
+_ft_phase_end() {
+    local phase="$1"
+    local start_var="_${phase}_START"
+    local start_ts=${!start_var:-0}
+    if [ "$start_ts" -gt 0 ]; then
+        local duration=$(($(date +%s) - start_ts))
+        _ft_log "msg='phase_complete' phase=$phase duration_sec=$duration"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# GITHUB ACTIONS SUMMARY -- writes deployment summary to Actions UI
+# Called at end of deploy (success or failure)
+# ---------------------------------------------------------------------------
+_ft_github_summary() {
+    local status="$1"
+    local container="${2:-unknown}"
+    local image="${3:-unknown}"
+    local reason="${4:-}"
+
+    if [ -z "$GITHUB_STEP_SUMMARY" ]; then
+        return 0  # Not running in GitHub Actions
+    fi
+
+    {
+        echo "### 🚀 Deployment Summary"
+        echo ""
+        echo "| Field | Value |"
+        echo "|-------|-------|"
+        echo "| Status | **$status** |"
+        echo "| Deploy ID | \`$DEPLOY_ID\` |"
+        echo "| Duration | $(($(date +%s) - START_TS))s |"
+        echo "| Active Container | \`$container\` |"
+        echo "| Image SHA | \`${image:0:12}...\` |"
+        if [ -n "$reason" ]; then
+            echo "| Reason | $reason |"
+        fi
+        echo "| Timestamp | $(date -u +'%Y-%m-%d %H:%M:%S UTC') |"
+    } >> "$GITHUB_STEP_SUMMARY"
+}
+
+# ---------------------------------------------------------------------------
+# FINAL SYSTEM STATE SNAPSHOT -- records ground truth on success
+# ---------------------------------------------------------------------------
+_ft_final_state() {
+    local active_container="$1"
+    local image_sha="$2"
+    local nginx_upstream
+    nginx_upstream=$(grep -oE 'http://(api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo 'unknown')
+    _ft_log "msg='final_state' deploy_id=$DEPLOY_ID active=$active_container sha=${image_sha:0:12} nginx_upstream=$nginx_upstream"
 }
 
 # ---------------------------------------------------------------------------
@@ -105,7 +182,7 @@ _ft_snapshot() {
     docker ps --format '[DEPLOY]     {{.Names}} -> {{.Status}} ({{.Ports}})' 1>&2 2>/dev/null \
         || printf '[DEPLOY]     (docker ps unavailable)\n' >&2
     printf '[DEPLOY] -----------------------------------------------------------\n' >&2
-    set -x
+    if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -251,7 +328,7 @@ _ft_release_lock() {
         "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$_FT_STATE" "$$" >&2
     # Close FD 200 unconditionally; closing the FD releases the flock.
     exec 200>&- 2>/dev/null || true
-    set -x
+    if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -269,55 +346,9 @@ _ft_release_lock() {
 # localhost requests (VPS-internal) bypass the IP filter.
 # ---------------------------------------------------------------------------
 _ft_check_external_ready() {
-    { set +x; } 2>/dev/null
-    local attempt=0
-
-    # Phase 1 — in-network routing (source of truth).
-    # Hits nginx directly via Docker bridge; validates full nginx→api routing path.
-    # HTTPS with -k (skip cert) because nginx redirects HTTP to HTTPS.
-    local _p1_body
-    _p1_body=$(docker run --rm --network api_network curlimages/curl:8.7.1 -sk --max-time 5 "https://nginx/health" 2>/dev/null || echo "")
-    if echo "$_p1_body" | grep -q '"status":"ok"' 2>/dev/null; then
-        unset _p1_body
-        set -x
-        return 0
-    fi
-    unset _p1_body
-
-    # Phase 2 — HTTPS via localhost + Host header (advisory / TLS diagnostic).
-    # --insecure accepts Cloudflare origin certificate.
-    # status=000 means host→Docker TCP routing issue, NOT a TLS problem.
-    for attempt in 1 2 3; do
-        local body
-        body=$(curl -sS --max-time 5 \
-            --resolve "$API_HOSTNAME:443:127.0.0.1" \
-            "https://$API_HOSTNAME/health" \
-            --insecure 2>/dev/null || echo "")
-        if echo "$body" | grep -q '"status":"ok"' 2>/dev/null; then
-            set -x
-            return 0
-        fi
-        if [ -z "$body" ]; then
-            { printf 'external-ready: HTTPS phase-2 attempt %s — status=000 (host→Docker port routing, not TLS)\n' "$attempt"; } 2>/dev/null
-            local _http_body
-            _http_body=$(curl -sS --max-time 5 \
-                --resolve "$API_HOSTNAME:80:127.0.0.1" \
-                "http://$API_HOSTNAME/health" 2>/dev/null || echo "")
-            if echo "$_http_body" | grep -q '"status":"ok"' 2>/dev/null; then
-                { printf 'external-ready: HTTP:80 fallback passed (attempt %s)\n' "$attempt"; } 2>/dev/null
-                unset _http_body
-                set -x
-                return 0
-            fi
-            unset _http_body
-        fi
-        if [ "$attempt" -lt 3 ]; then
-            sleep "$attempt"
-        fi
-    done
-
-    set -x
-    return 1
+    # -f: fail on 4xx/5xx so HTML error pages never match the grep
+    docker run --rm --network "$NETWORK" "$_FT_CURL_IMG" -sfk --max-time 5 "https://nginx/health" 2>/dev/null \
+        | grep -q '"status":"ok"'
 }
 
 # ---------------------------------------------------------------------------
@@ -334,13 +365,42 @@ _ft_retry_curl() {
     while [ "$i" -lt "$max" ]; do
         i=$((i + 1))
         if curl -sf --max-time 5 "$@" "$url" >/dev/null 2>&1; then
-            set -x
+            if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
             return 0
         fi
         sleep 1
     done
-    set -x
+    if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
     return 1
+}
+
+# ---------------------------------------------------------------------------
+# SILENT EXECUTION WRAPPER
+# All inherently noisy commands (docker pull, docker compose, etc.) go through
+# run(). Output is suppressed unless DEBUG=true.
+# On failure: surfaces the command name and captured output to stderr so
+# failures are never silently swallowed.
+# ---------------------------------------------------------------------------
+run() {
+    if [ "${DEBUG:-false}" = "true" ]; then
+        "$@"
+    else
+        local _run_out
+        if ! _run_out=$("$@" 2>&1); then
+            printf '[ERROR] Command failed: %s\n' "$*" >&2
+            printf '%s\n' "$_run_out" >&2
+            return 1
+        fi
+    fi
+}
+
+# Like run() but always forwards stderr so error messages are never swallowed.
+run_show_err() {
+    if [ "${DEBUG:-false}" = "true" ]; then
+        "$@"
+    else
+        "$@" >/dev/null
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -478,7 +538,7 @@ _ft_log "msg='startup recovery info' last_good=$_LAST_GOOD"
 # Disable xtrace while sourcing .env to prevent secrets in logs.
 set +x
 source "$SCRIPT_DIR/load-env.sh"
-set -x
+if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
 
 # DEPLOY_ROOT is now exported by load-env.sh.
 DEPLOY_HISTORY="$DEPLOY_ROOT/.deploy_history"
@@ -487,7 +547,7 @@ _ft_log "msg='environment loaded' api_hostname=$API_HOSTNAME"
 
 set +x
 "$SCRIPT_DIR/validate-env.sh" --check-monitoring
-set -x
+if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
 # Harden monitoring env file permissions on every deploy (defense-in-depth).
 chmod 600 "$DEPLOY_ROOT/infra/.env.monitoring" 2>/dev/null || true
 
@@ -541,12 +601,14 @@ if ! docker inspect nginx >/dev/null 2>&1; then
     # Kill any ghost docker-proxy holdind host ports before starting nginx
     pkill docker-proxy 2>/dev/null || true
     cd "$DEPLOY_ROOT/infra"
-    if ! docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml \
-            up -d --no-deps nginx 2>&1 | tee -a "$DEPLOY_LOG_FILE" >&2; then
+    _COMPOSE_OUT=$(docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml \
+            up -d --no-deps nginx 2>&1) || {
+        printf '%s\n' "$_COMPOSE_OUT" >&2
         _ft_log "level=ERROR msg='docker compose up --no-deps nginx failed'"
         cd "$DEPLOY_ROOT"
         _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_bootstrap_compose_failed"
-    fi
+    }
+    unset _COMPOSE_OUT
     cd "$DEPLOY_ROOT"
     # Wait up to 30 s for the nginx container to become available
     _NGINX_STARTED=false
@@ -556,7 +618,6 @@ if ! docker inspect nginx >/dev/null 2>&1; then
             _NGINX_STARTED=true
             break
         fi
-        _ft_log "msg='waiting for nginx container' attempt=$_ni/10"
         sleep 3
     done
     if [ "$_NGINX_STARTED" != "true" ]; then
@@ -606,15 +667,17 @@ _ft_log "msg='deploy metadata' sha=$IMAGE_SHA image=$IMAGE script_dir=$SCRIPT_DI
 # [1/7] PULL IMAGE
 # ---------------------------------------------------------------------------
 _ft_state "PULL_IMAGE" "msg='pulling container image' sha=$IMAGE_SHA"
+_ft_phase_start "PULL_IMAGE"
 
 # Explicit pull with hard error.
 # Without this guard a missing image would cause docker run to attempt a
 # background pull inside a 60-s timeout, racing the readiness loop.
-if ! timeout 120 docker pull "$IMAGE"; then
+if ! run timeout 120 docker pull "$IMAGE"; then
     _ft_log "level=ERROR msg='image pull failed' image=$IMAGE"
     _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=image_pull_failed image=$IMAGE"
 fi
 _ft_log "msg='image pulled' image=$IMAGE"
+_ft_phase_end "PULL_IMAGE"
 
 # ---------------------------------------------------------------------------
 # BOOTSTRAP GUARD -- no API containers exist (first deploy or full restart)
@@ -638,7 +701,7 @@ if ! docker ps -a --format '{{.Names}}' | grep -Eq '^api-(blue|green)$'; then
     # Remove stale container if left in a stopped state somehow
     docker rm -f api-blue 2>/dev/null || true
 
-    timeout 60 docker run -d \
+    _CID=$(timeout 60 docker run -d \
         --name api-blue \
         --network "$NETWORK" \
         --restart unless-stopped \
@@ -646,7 +709,12 @@ if ! docker ps -a --format '{{.Names}}' | grep -Eq '^api-(blue|green)$'; then
         --label "api.slot=blue" \
         --label "api.deploy_id=$DEPLOY_ID" \
         --env-file "$ENV_FILE" \
-        "$IMAGE"
+        "$IMAGE" 2>&1) || {
+        printf '%s\n' "$_CID" >&2
+        _ft_error "msg='bootstrap: container start failed' name=api-blue"
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=bootstrap_container_start_failed"
+    }
+    unset _CID
 
     _ft_log "msg='bootstrap: api-blue started' image=$IMAGE"
 
@@ -662,7 +730,7 @@ if ! docker ps -a --format '{{.Names}}' | grep -Eq '^api-(blue|green)$'; then
             _BOOT_OK=true
             break
         fi
-        _ft_log "msg='bootstrap: waiting for api-blue readiness' attempt=$_bi/20"
+        [ $((_bi % 10)) -eq 0 ] && _ft_log "msg='bootstrap: still waiting for api-blue readiness' attempt=$_bi/20"
         sleep 2
     done
 
@@ -697,11 +765,13 @@ if ! docker ps -a --format '{{.Names}}' | grep -Eq '^api-(blue|green)$'; then
     unset _NGINX_BOOT_NET
 
     # Fail-fast: any nginx test/reload failure is a hard error at bootstrap.
-    if ! docker exec nginx nginx -t 2>&1; then
+    _NGINX_TEST_OUT=$(docker exec nginx nginx -t 2>&1) || {
+        printf '%s\n' "$_NGINX_TEST_OUT" >&2
         _ft_log "level=ERROR msg='bootstrap: nginx config test failed'"
         _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_config_test_failed_bootstrap"
-    fi
-    docker exec nginx nginx -s reload \
+    }
+    unset _NGINX_TEST_OUT
+    docker exec nginx nginx -s reload >/dev/null 2>&1 \
         || { _ft_log "level=ERROR msg='bootstrap: nginx reload failed'"; _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_reload_failed_bootstrap"; }
     _ft_log "msg='bootstrap: nginx reloaded to api-blue'"
 
@@ -788,6 +858,8 @@ if [ "$_RUNNING_IMAGE" = "$IMAGE" ]; then
             -s --max-time 3 "http://$ACTIVE_NAME:$APP_PORT/ready")
         if echo "$_IDEMPOTENT_HEALTH" | grep -q '"status":"ready"' 2>/dev/null; then
             _ft_log "msg='target SHA already running and healthy -- nothing to do' container=$ACTIVE_NAME image=$IMAGE"
+            _ft_final_state "$ACTIVE_NAME" "$IMAGE_SHA"
+            _ft_github_summary "✅ IDEMPOTENT (no change)" "$ACTIVE_NAME" "$IMAGE_SHA" "SHA already deployed"
             _ft_exit 0 "DEPLOY_SUCCESS" "reason=idempotent_noop sha=$IMAGE_SHA container=$ACTIVE_NAME"
         else
             _ft_log "msg='idempotent SHA match but active container not healthy -- proceeding with deploy' container=$ACTIVE_NAME"
@@ -813,7 +885,7 @@ if docker ps -a --format '{{.Names}}' | grep -Eq "^${INACTIVE_NAME}$"; then
         || docker rm "$INACTIVE_NAME"
 fi
 
-timeout 60 docker run -d \
+_CID=$(timeout 60 docker run -d \
   --name "$INACTIVE_NAME" \
   --network "$NETWORK" \
   --restart unless-stopped \
@@ -821,7 +893,12 @@ timeout 60 docker run -d \
   --label "api.slot=$INACTIVE" \
   --label "api.deploy_id=$DEPLOY_ID" \
   --env-file "$ENV_FILE" \
-  "$IMAGE"
+  "$IMAGE" 2>&1) || {
+    printf '%s\n' "$_CID" >&2
+    _ft_error "msg='container start failed' name=$INACTIVE_NAME"
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=container_start_failed name=$INACTIVE_NAME"
+}
+unset _CID
 
 _ft_log "msg='container started' name=$INACTIVE_NAME"
 
@@ -836,8 +913,7 @@ if [ "$_ACTUAL_IMAGE" != "$IMAGE" ]; then
 fi
 _ft_log "msg='image immutability check passed' image=$_ACTUAL_IMAGE"
 unset _ACTUAL_IMAGE
-
-# ---------------------------------------------------------------------------
+_ft_log "msg='phase_complete' state=START_INACTIVE status=success container=$INACTIVE_NAME"
 # [4/7] INTERNAL HEALTH CHECK
 #   Uses /ready to validate Redis, Supabase, and BullMQ before traffic switch.
 # ---------------------------------------------------------------------------
@@ -862,7 +938,6 @@ while [ "$_CONN_ATTEMPTS" -lt 5 ]; do
         _CONN_OK=true
         break
     fi
-    _ft_log "msg='connectivity pre-check waiting' attempt=$_CONN_ATTEMPTS/5 container=$INACTIVE_NAME"
     sleep 2
 done
 if [ "$_CONN_OK" = "false" ]; then
@@ -906,10 +981,14 @@ until true; do
         _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=new_container_health_timeout attempts=$ATTEMPT"
     fi
 
-    _ft_log "msg='waiting for readiness' attempt=$ATTEMPT/$MAX_HEALTH_ATTEMPTS status=$STATUS interval=${HEALTH_INTERVAL}s"
-    # Add up to 1s of jitter to prevent synchronized retries under contention.
-    sleep $((HEALTH_INTERVAL + RANDOM % 2))
+    # Only log progress every 10 attempts to avoid spamming; failure threshold logs always appear above
+    [ $((ATTEMPT % 10)) -eq 0 ] && _ft_log "msg='still waiting for readiness' attempt=$ATTEMPT/$MAX_HEALTH_ATTEMPTS status=$STATUS"
+    # Add up to 2s of jitter to prevent synchronized retries under contention.
+    sleep $((HEALTH_INTERVAL + RANDOM % 3))
 done
+
+_ft_log "msg='phase_complete' phase=HEALTH_CHECK_INTERNAL status=success container=$INACTIVE_NAME"
+_ft_phase_end "HEALTH_CHECK_INTERNAL"
 
 # ---------------------------------------------------------------------------
 # [5/7] SWITCH NGINX UPSTREAM
@@ -962,12 +1041,14 @@ if ! echo "$_NGINX_RELOAD_NET" | grep -q "$NETWORK"; then
 fi
 unset _NGINX_RELOAD_NET
 
-if ! docker exec nginx nginx -t 2>&1; then
+_NGINX_TEST_OUT=$(docker exec nginx nginx -t 2>&1) || {
+    printf '%s\n' "$_NGINX_TEST_OUT" >&2
     _ft_log "level=ERROR msg='nginx config test failed -- restoring backup'"
     cp "$NGINX_BACKUP" "$NGINX_CONF"
     _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_config_test_failed"
-fi
-docker exec nginx nginx -s reload \
+}
+unset _NGINX_TEST_OUT
+docker exec nginx nginx -s reload >/dev/null 2>&1 \
     || { cp "$NGINX_BACKUP" "$NGINX_CONF"; _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_reload_failed"; }
 _ft_log "msg='nginx reloaded' upstream=$INACTIVE_NAME:$APP_PORT"
 
@@ -978,19 +1059,26 @@ _RELOAD_CONTAINER=$(grep -oE 'http://(api-blue|api-green):3000' "$NGINX_CONF" 2>
 if [ "$_RELOAD_CONTAINER" != "$INACTIVE_NAME" ]; then
     _ft_log "level=ERROR msg='nginx upstream sanity check failed after reload' expected=$INACTIVE_NAME actual=${_RELOAD_CONTAINER:-unreadable}"
     cp "$NGINX_BACKUP" "$NGINX_CONF"
-    docker exec nginx nginx -t 2>&1 && docker exec nginx nginx -s reload || true
+    docker exec nginx nginx -t >/dev/null 2>&1 && docker exec nginx nginx -s reload >/dev/null 2>&1 || true
     _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_upstream_mismatch expected=$INACTIVE_NAME actual=${_RELOAD_CONTAINER:-unreadable}"
 fi
 unset _RELOAD_CONTAINER
 _ft_log "msg='nginx upstream sanity check passed' container=$INACTIVE_NAME"
+_ft_log "msg='phase_complete' phase=SWITCH_NGINX status=success container=$INACTIVE_NAME"
+_ft_phase_end "SWITCH_NGINX"
 
 # Write the slot file AFTER nginx reload so it always reflects what nginx
 # is currently serving. If the public health check then fails and we roll
 # back, we restore nginx AND overwrite this file back to $ACTIVE.
 _ft_write_slot "$INACTIVE"
 
-# Small settle window to stabilize TLS/keep-alive/edge cases
-sleep 2
+# Observability hook — log the traffic switch for monitoring/tracking
+_ft_log "msg='TRAFFIC_SWITCH' active=$INACTIVE_NAME sha=$IMAGE_SHA deploy_id=$DEPLOY_ID"
+
+# Nginx warm-up delay — prevents race condition where reload completes before
+# upstream connections are fully established and TLS sessions negotiated.
+# Longer than typical TLS handshake + connection setup.
+sleep $((RANDOM % 3 + 5))
 
 # POST-SWITCH ROUTING VERIFICATION (in-network)
 # Run a short-lived curl container on api_network to probe nginx/health.
@@ -1001,18 +1089,18 @@ _ft_log "msg='post-switch nginx routing verification (in-network)'"
 _POST_SWITCH_OK=false
 for _ps in 1 2 3 4 5; do
     if docker run --rm --network api_network curlimages/curl:8.7.1 \
-           -sk --max-time 5 "https://nginx/health" >/dev/null 2>&1; then
+           -sfk --max-time 5 "https://nginx/health" >/dev/null 2>&1; then
         _POST_SWITCH_OK=true
         break
     fi
-    _ft_log "msg='post-switch in-network check waiting' attempt=$_ps/5"
-    sleep 2
+    sleep $((RANDOM % 2 + 2))
 done
 if [ "$_POST_SWITCH_OK" != "true" ]; then
-    _ft_log "level=ERROR msg='post-switch routing verification failed — nginx cannot reach new container'"
+    _ft_error "msg='post-switch routing verification failed — nginx cannot reach new container'"
+    _ft_error "msg='ROLLBACK triggered → restoring $ACTIVE_NAME (post-switch restore)'"
     _ft_snapshot
     cp "$NGINX_BACKUP" "$NGINX_CONF"
-    if docker exec nginx nginx -t 2>&1 && docker exec nginx nginx -s reload; then
+    if docker exec nginx nginx -t >/dev/null 2>&1 && docker exec nginx nginx -s reload >/dev/null 2>&1; then
         _ft_log "msg='nginx restored (post-switch routing failure)'"
     else
         _ft_log "level=ERROR msg='nginx restore failed during post-switch rollback'"
@@ -1043,66 +1131,19 @@ sleep 3
 _PUB_PASSED=false
 _PUB_STATUS="000"
 
-# Phase 1 — in-network routing (source of truth for rollback decision).
-# Validates full nginx→api-<slot>:3000 path inside Docker bridge network.
-# HTTPS with -k (skip cert) because nginx redirects HTTP to HTTPS.
-for _attempt in 1 2 3; do
-    _P1_BODY=$(docker run --rm --network api_network curlimages/curl:8.7.1 -sk --max-time 10 "https://nginx/ready" 2>/dev/null || echo "")
-    if echo "$_P1_BODY" | grep -q '"status":"ready"' 2>/dev/null; then
-        _PUB_PASSED=true
-        _PUB_STATUS="200-innet"
-        _ft_log "msg='public health phase-1 (in-network) passed' attempt=$_attempt/3 container=$INACTIVE_NAME"
-        unset _P1_BODY
-        break
-    fi
-    _ft_log "msg='public health phase-1 (in-network) attempt failed' attempt=$_attempt/3"
-    unset _P1_BODY
-    sleep 3
-done
-
-# Phase 2 — HTTPS via localhost + Host header (advisory / TLS diagnostic).
-# Uses --insecure to accept Cloudflare origin certificate.
-# NOTE: status=000 means host→Docker TCP port routing issue, NOT a TLS problem
-# (--insecure already handles cert trust). In-network result above is authoritative.
-_HTTPS_PASSED=false
-_HTTPS_STATUS="000"
-for _attempt in 1 2 3 4 5; do
-    _PUB_BODY=$(mktemp)
-    _HTTPS_STATUS=$(curl --max-time 10 -sS -o "$_PUB_BODY" -w "%{http_code}" \
-        --resolve "$API_HOSTNAME:443:127.0.0.1" \
-        "https://$API_HOSTNAME/ready" \
-        --insecure 2>/dev/null || echo "000")
-
-    if [ "$_HTTPS_STATUS" = "200" ] && grep -q '"status":"ready"' "$_PUB_BODY" 2>/dev/null; then
-        _HTTPS_PASSED=true
-        rm -f "$_PUB_BODY"
-        break
-    fi
-
-    if [ "$_HTTPS_STATUS" = "000" ]; then
-        _ft_log "msg='HTTPS phase-2 status=000 — host→Docker port routing unreachable (not a TLS error; in-network is source of truth)' attempt=$_attempt/5"
-        _HTTP_FALLBACK=$(curl -sS --max-time 5 \
-            --resolve "$API_HOSTNAME:80:127.0.0.1" \
-            "http://$API_HOSTNAME/ready" 2>/dev/null || echo "")
-        if echo "$_HTTP_FALLBACK" | grep -q '"status":"ready"' 2>/dev/null; then
-            _ft_log "msg='HTTP:80 fallback confirmed backend reachable' attempt=$_attempt"
-            _HTTPS_PASSED=true
-            _HTTPS_STATUS="200-http"
-        fi
-        unset _HTTP_FALLBACK
-    fi
-    [ "$_HTTPS_PASSED" = "true" ] && { rm -f "$_PUB_BODY"; break; }
-    _ft_log "msg='HTTPS phase-2 attempt failed' attempt=$_attempt/5 status=$_HTTPS_STATUS host=$API_HOSTNAME"
-    rm -f "$_PUB_BODY"
-    sleep 5
-done
-
-if [ "$_HTTPS_PASSED" = "true" ]; then
-    _ft_log "msg='HTTPS phase-2 passed' status=$_HTTPS_STATUS container=$INACTIVE_NAME"
+# Public health check — single source of truth via docker network
+# HTTPS with -k because nginx redirects HTTP to HTTPS
+# -f: fail on 4xx/5xx so HTML error pages never match the grep
+if docker run --rm --network api_network curlimages/curl:8.7.1 \
+    -sfk --max-time 10 "https://nginx/health" 2>/dev/null | grep -q '"status":"ok"'; then
+    _PUB_PASSED=true
+    _PUB_STATUS="200"
+    _ft_log "msg='public health check passed' container=$INACTIVE_NAME"
 else
-    _ft_log "level=WARN msg='HTTPS phase-2 diagnostic failed (non-blocking)' status=$_HTTPS_STATUS host=$API_HOSTNAME note='host→Docker routing issue; in-network is authoritative'"
+    _PUB_PASSED=false
+    _PUB_STATUS="000"
+    _ft_log "msg='public health check failed' container=$INACTIVE_NAME"
 fi
-unset _HTTPS_PASSED _HTTPS_STATUS _PUB_BODY
 
 # Container alignment check -- live nginx config MUST contain http://INACTIVE_NAME:3000.
 _NGINX_CONTAINER=$(grep -oE 'http://(api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
@@ -1117,7 +1158,7 @@ if [ "$_PUB_PASSED" != "true" ]; then
 
     _ft_log "msg='restoring previous nginx config'"
     cp "$NGINX_BACKUP" "$NGINX_CONF"
-    if docker exec nginx nginx -t 2>&1 && docker exec nginx nginx -s reload; then
+    if docker exec nginx nginx -t >/dev/null 2>&1 && docker exec nginx nginx -s reload >/dev/null 2>&1; then
         _ft_log "msg='nginx restored to previous config'"
     else
         _ft_log "level=ERROR msg='nginx restore failed -- check manually'"
@@ -1145,6 +1186,7 @@ if [ "$_PUB_PASSED" != "true" ]; then
     _ft_log "msg='system degraded -- triggering rollback' container=$ACTIVE_NAME"
     if [ "${API_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
         _ft_log "msg='triggering image rollback to previous stable SHA'"
+        _ft_error "msg='ROLLBACK triggered → restoring $ACTIVE_NAME'"
         export API_ROLLBACK_IN_PROGRESS=1
         _ft_release_lock
         if ! "$SCRIPT_DIR/rollback.sh" --auto; then
@@ -1158,20 +1200,23 @@ if [ "$_PUB_PASSED" != "true" ]; then
     fi
 fi
 
-unset _PUB_PASSED _attempt _PUB_STATUS _NGINX_CONTAINER
-_ft_log "msg='public health check passed' container=$INACTIVE_NAME host=$API_HOSTNAME endpoint=/ready"
+unset _PUB_PASSED _PUB_STATUS _NGINX_CONTAINER
+_ft_log "msg='public health check passed' container=$INACTIVE_NAME"
 
 # ---------------------------------------------------------------------------
-# [6.5/7] STABILITY CHECK -- re-verify external endpoint after a settle window
+# [6.5/7] STABILITY_CHECK -- re-verify external endpoint after a settle window
 # Catches flapping services that pass the initial check then regress rapidly
 # ---------------------------------------------------------------------------
 _ft_state "STABILITY_CHECK" "msg='post-switch stability check' settle_seconds=5"
+_ft_phase_start "STABILITY_CHECK"
 
 sleep 5
 _STABLE=false
 if _ft_check_external_ready; then
     _STABLE=true
     _ft_log "msg='stability check passed' url=https://$API_HOSTNAME/ready"
+    _ft_log "msg='phase_complete' phase=STABILITY_CHECK status=success"
+    _ft_phase_end "STABILITY_CHECK"
 fi
 
 if [ "$_STABLE" = "false" ]; then
@@ -1181,7 +1226,7 @@ if [ "$_STABLE" = "false" ]; then
     # Restore nginx + slot
     _ft_log "msg='restoring previous nginx config (stability failure)'"
     cp "$NGINX_BACKUP" "$NGINX_CONF"
-    if docker exec nginx nginx -t 2>&1 && docker exec nginx nginx -s reload; then
+    if docker exec nginx nginx -t >/dev/null 2>&1 && docker exec nginx nginx -s reload >/dev/null 2>&1; then
         _ft_log "msg='nginx restored (stability failure)'"
     else
         _ft_log "level=ERROR msg='nginx restore failed during stability rollback -- check manually'"
@@ -1196,7 +1241,7 @@ if [ "$_STABLE" = "false" ]; then
         if echo "$_ACTIVE_HEALTH" | grep -q '"status":"ready"' 2>/dev/null; then
             _ft_log "msg='active container healthy after stability failure -- skipping rollback' container=$ACTIVE_NAME"
             unset _ACTIVE_HEALTH
-            _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=stability_check_failed active_container_healthy=true"
+            _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=public_health_check_failed active_container_healthy=true"
         fi
         unset _ACTIVE_HEALTH
         _ft_log "msg='active container running but NOT healthy after stability failure -- rollback needed'"
@@ -1204,6 +1249,7 @@ if [ "$_STABLE" = "false" ]; then
 
     _ft_log "msg='triggering rollback after stability failure'"
     if [ "${API_ROLLBACK_IN_PROGRESS:-0}" != "1" ]; then
+        _ft_error "msg='ROLLBACK triggered → restoring $ACTIVE_NAME'"
         export API_ROLLBACK_IN_PROGRESS=1
         _ft_release_lock
         if ! "$SCRIPT_DIR/rollback.sh" --auto; then
@@ -1298,7 +1344,7 @@ if command -v curl >/dev/null 2>&1; then
         _ft_log "level=WARN msg='truth check: internal endpoint not ready' url=http://$INACTIVE_NAME:$APP_PORT/ready response=${_INT_READY:0:100}"
     fi
 
-    # Check external endpoint (DNS/Cloudflare/TLS) with latency measurement (SLO monitoring)
+    # Check external endpoint via docker network (deterministic, no host routing issues)
     # Uses retry + backoff to smooth transient edge jitter
     _EXT_READY_OK=false
     _EXT_LATENCY_MS=0
@@ -1307,13 +1353,13 @@ if command -v curl >/dev/null 2>&1; then
     _slo_attempt=0
     for _slo_attempt in 1 2 3; do
         _slo_start=$(date +%s%3N)
-        if curl -sS --max-time 3 --resolve "$API_HOSTNAME:443:127.0.0.1" "https://$API_HOSTNAME/ready" --insecure 2>/dev/null | grep -q '"status":"ready"'; then
+        if docker run --rm --network api_network curlimages/curl:8.7.1 -sk --max-time 3 "https://nginx/health" 2>/dev/null | grep -q '"status":"ok"'; then
             _slo_end=$(date +%s%3N)
             _EXT_LATENCY_MS=$((_slo_end - _slo_start))
             _EXT_READY_OK=true
             break
         fi
-        if [ $_slo_attempt -lt 3 ]; then sleep 5; fi
+        if [ $_slo_attempt -lt 3 ]; then sleep $((RANDOM % 3 + 5)); fi
     done
 
     if [ "$_EXT_READY_OK" = "true" ]; then
@@ -1387,8 +1433,8 @@ if [ -f "$MONITORING_HASH_FILE" ] && [ "$(cat "$MONITORING_HASH_FILE")" = "$MONI
 else
     _ft_log "msg='monitoring config changed -- restarting monitoring stack'"
     cd "$REPO_DIR/infra"
-    docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml pull --quiet
-    docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml up -d --remove-orphans
+    run docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml pull --quiet
+    run docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml up -d --remove-orphans
     cd "$REPO_DIR"
     echo "$MONITORING_HASH" > "$MONITORING_HASH_FILE"
     _ft_log "msg='monitoring stack restarted'"
@@ -1403,5 +1449,9 @@ _ft_log "msg='running zombie purge'"
 docker ps -a --format '{{.Names}}' \
     | grep -E '^api-(blue|green)-old-[0-9]+$' \
     | xargs -r docker rm -f 2>/dev/null || true
+
+# Final state snapshot and GitHub Actions summary
+_ft_final_state "$INACTIVE_NAME" "$IMAGE_SHA"
+_ft_github_summary "✅ SUCCESS" "$INACTIVE_NAME" "$IMAGE_SHA"
 
 _ft_exit 0 "DEPLOY_SUCCESS" "sha=$IMAGE_SHA container=$INACTIVE_NAME slot=$INACTIVE"

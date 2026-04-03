@@ -163,7 +163,7 @@ jobs:
         run: |
           if grep -r --include="*.ts" "process\.env" src/ \
                | grep -v "src/config/env\.ts"; then
-            echo "❌ Direct process.env access detected outside env.ts"
+            echo "::error::Direct process.env access detected outside env.ts — use: import { env } from './config/env.js' instead"
             echo "   Use: import { env } from './config/env.js' instead"
             exit 1
           fi
@@ -312,10 +312,11 @@ jobs:
           IMAGE_NAME="fieldtrack-api:${{ steps.meta.outputs.sha_short }}"
           DIGEST=$(docker inspect "$IMAGE_NAME" --format='{{.Id}}')
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
-          echo "=== Build traceability ==="
+          echo "::group::Build traceability"
           echo "  Commit SHA   : ${{ github.sha }}"
           echo "  Image tag    : $IMAGE_NAME"
           echo "  Image digest : $DIGEST"
+          echo "::endgroup::"
 
       # Compare this digest with the one stored by pr.yml's production-simulation.
       # A match = bit-for-bit parity. A mismatch = code/cache divergence (warning).
@@ -606,7 +607,7 @@ jobs:
           script: |
             set -euo pipefail
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
-            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT — run vps-setup.sh first"; exit 1; }
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT — run vps-setup.sh first"; exit 1; }
             cd "$DEPLOY_ROOT"
             # Pull latest scripts without full deploy
             git fetch origin master --depth=1
@@ -658,7 +659,7 @@ jobs:
             echo "| Workflow run | [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |"
             echo "| Commit message | \`${{ github.event.head_commit.message }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "📋 Deployment initiated — SHA=${{ github.sha }} EVENT=${{ github.event_name }} ACTOR=${{ github.actor }} RUN=${{ github.run_id }}"
+          echo "[DEPLOY] Deployment initiated — SHA=${{ github.sha }} EVENT=${{ github.event_name }} ACTOR=${{ github.actor }}"
 
       - name: Validate environment contract before deploy
         uses: appleboy/ssh-action@v1.0.3
@@ -669,21 +670,17 @@ jobs:
           script: |
             set -euo pipefail
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
-            echo "USER=$(whoami)"
-            echo "HOME=$HOME"
-            echo "PWD=$(pwd)"
-            ls -la "$HOME"
-            ls -la "$HOME/api"
-            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             # Pin repo to the exact SHA that was built and scanned by CodeQL.
             # Prevents stale scripts from running if concurrent commits landed.
             git fetch origin
             git reset --hard ${{ needs.build-scan-push.outputs.deploy_sha }}
             chmod +x scripts/*.sh
-            echo "=== Pre-deploy environment validation ==="
+            echo "::group::Environment validation"
             ./scripts/validate-env.sh --check-monitoring
-            echo "✓ Environment contract validated"
+            echo "::endgroup::"
+            echo "[DEPLOY] Environment contract validated"
 
       - name: Blue-Green deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -695,13 +692,7 @@ jobs:
             set -euo pipefail
             T0=$(date +%s)
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
-            echo "USER=$(whoami)"
-            echo "HOME=$HOME"
-            echo "PWD=$(pwd)"
-            ls -la "$HOME"
-            ls -la "$HOME/api"
-            ls -la "$DEPLOY_ROOT"
-            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             # Enforce repo is at the exact SHA being deployed (issue 7 — prevents
             # stale deploy scripts if another commit landed during this pipeline run).
@@ -710,7 +701,7 @@ jobs:
             chmod +x scripts/*.sh
             # Environment already validated in previous step
             ./scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
-            echo "✓ Deploy completed in $(($(date +%s) - T0))s"
+            echo "[DEPLOY] Deploy completed in $(($(date +%s) - T0))s"
 
       - name: Log deployment state (slot + SHA for debugging)
         uses: appleboy/ssh-action@v1.0.3
@@ -738,7 +729,7 @@ jobs:
               DEPLOY_STATUS="CONTAINER_MISSING"
             fi
 
-            echo "DEPLOY_STATE=$DEPLOY_STATUS | SLOT=$ACTIVE_SLOT | CONTAINER=$ACTIVE_CONTAINER | SHA=${{ github.sha }}"
+            echo "[DEPLOY] state=$DEPLOY_STATUS slot=$ACTIVE_SLOT container=$ACTIVE_CONTAINER sha=${{ github.sha }}"
 
   # ---------------------------------------------------------------------------
   # JOB: api-health-gate  (Step E+)
@@ -762,41 +753,32 @@ jobs:
           script: |
             set -euo pipefail
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
-            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             source scripts/load-env.sh
 
-            # Determine active slot (blue/green)
             ACTIVE_SLOT=$(cat /var/run/api/active-slot 2>/dev/null || echo "blue")
             ACTIVE_CONTAINER="api-$ACTIVE_SLOT"
 
-            echo "=== API Health Gate (slot: $ACTIVE_SLOT, container: $ACTIVE_CONTAINER) ==="
-
-            # Guard: container must exist before we try to reach it
             docker inspect "$ACTIVE_CONTAINER" >/dev/null 2>&1 || {
-              echo "❌ Container $ACTIVE_CONTAINER not found"
+              echo "::error::Container $ACTIVE_CONTAINER not found"
               exit 1
             }
 
-            # Poll /ready via in-network curl (Docker DNS + bridge routing).
-            # /ready checks Redis, Supabase, and BullMQ — definitive readiness gate.
-            # Uses docker run rather than docker exec so the check exercises the
-            # same network path nginx uses, not the container's own loopback.
             FT_CURL_IMG="curlimages/curl:8.7.1"
             for i in $(seq 1 15); do
               STATUS=$(docker run --rm --network api_network "$FT_CURL_IMG" \
                 -s -o /dev/null -w "%{http_code}" \
                 "http://$ACTIVE_CONTAINER:3000/ready" 2>/dev/null || echo "000")
               if [ "$STATUS" = "200" ]; then
-                echo "✓ API ready (container $ACTIVE_CONTAINER, attempt $i)"
+                echo "[DEPLOY] API ready (slot=$ACTIVE_SLOT attempt=$i)"
                 exit 0
               fi
-              echo "  Attempt $i: HTTP $STATUS — waiting..."
               sleep 2
             done
 
-            echo "❌ API /ready did not return 200 after 30s — monitoring sync would fail anyway"
-            docker logs "$ACTIVE_CONTAINER" --tail 30 2>/dev/null || true
+            echo "::error::API /ready did not return 200 after 30s"
+            docker logs "$ACTIVE_CONTAINER" --tail 30 >&2 2>/dev/null || true
             exit 1
 
   # ---------------------------------------------------------------------------
@@ -821,12 +803,7 @@ jobs:
             set -euo pipefail
             T0=$(date +%s)
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
-            echo "USER=$(whoami)"
-            echo "HOME=$HOME"
-            echo "PWD=$(pwd)"
-            ls -la "$HOME"
-            ls -la "$HOME/api"
-            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             INFRA_DIR="$DEPLOY_ROOT/infra"
             NGINX_LIVE="$DEPLOY_ROOT/infra/nginx/live/api.conf"
@@ -840,12 +817,10 @@ jobs:
             # app variables. DEPLOY_ROOT is already exported above; load-env.sh uses it.
             source "$DEPLOY_ROOT/scripts/load-env.sh"
 
-            echo "✓ API_HOSTNAME:    $API_HOSTNAME"
-
             # Ensure live/backup dirs exist
             mkdir -p "$(dirname "$NGINX_LIVE")" "$NGINX_BACKUP_DIR"
 
-            echo "=== Syncing Nginx (slot: $ACTIVE_SLOT, container: $ACTIVE_CONTAINER) ==="
+            echo "::group::Nginx sync (slot=$ACTIVE_SLOT)"
             cp "$NGINX_LIVE" "$NGINX_BACKUP_DIR/api.conf.bak.$(date +%s)" 2>/dev/null || true
             NGINX_TMP=$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)
             sed \
@@ -855,48 +830,42 @@ jobs:
             cp "$NGINX_TMP" "$NGINX_LIVE"
             rm -f "$NGINX_TMP"
 
-            if ! docker exec nginx nginx -t 2>&1; then
-              echo "Nginx test failed — restoring backup..."
+            NGINX_TEST_OUT=$(docker exec nginx nginx -t 2>&1) || {
+              echo "::error::Nginx config test failed — restoring backup"
+              printf '%s\n' "$NGINX_TEST_OUT" >&2
               LATEST_BAK=$(ls -1t "$NGINX_BACKUP_DIR"/api.conf.bak.* 2>/dev/null | head -1 || true)
               [ -n "$LATEST_BAK" ] && cp "$LATEST_BAK" "$NGINX_LIVE"
               exit 1
-            fi
-            docker exec nginx nginx -s reload
-            echo "✓ Nginx reloaded."
+            }
+            docker exec nginx nginx -s reload >/dev/null 2>&1
+            echo "[DEPLOY] Nginx reloaded → upstream=$ACTIVE_CONTAINER"
+            echo "::endgroup::"
 
-            # ROUTING VALIDATION — Test actual traffic through Nginx
-            # Phase 1 (source of truth): in-network docker run inside api_network.
-            # Phase 2 (advisory): HTTPS via localhost + Host header; --insecure handles
-            # Cloudflare origin cert. status=000 = host→Docker TCP routing issue, not TLS.
-            echo "=== Testing Nginx routing (in-network primary, HTTPS advisory) ==="
-            sleep 2  # Give Nginx a moment to fully apply reload
-
+            # ROUTING VALIDATION — in-network (source of truth)
+            sleep 2
             ROUTE_STATUS=$(docker run --rm --network api_network \
               curlimages/curl:8.7.1 -sk -o /dev/null -w "%{http_code}" \
               --max-time 10 https://nginx/health 2>/dev/null || echo "000")
 
             if [ "$ROUTE_STATUS" = "200" ]; then
-              echo "✓ Nginx routing verified via in-network check (HTTP $ROUTE_STATUS)"
+              echo "[DEPLOY] Nginx routing verified (HTTP $ROUTE_STATUS)"
             else
-              echo "❌ Nginx in-network routing broken (HTTP $ROUTE_STATUS expected 200) — restoring backup..."
+              echo "::error::Nginx routing check failed (HTTP $ROUTE_STATUS) — restoring backup"
               LATEST_BAK=$(ls -1t "$NGINX_BACKUP_DIR"/api.conf.bak.* 2>/dev/null | head -1 || true)
               [ -n "$LATEST_BAK" ] && cp "$LATEST_BAK" "$NGINX_LIVE"
-              docker exec nginx nginx -t 2>&1 && docker exec nginx nginx -s reload || true
+              docker exec nginx nginx -t >/dev/null 2>&1 && docker exec nginx nginx -s reload >/dev/null 2>&1 || true
               exit 1
             fi
 
-            # HTTPS advisory check (non-blocking — host→Docker loopback may fail with status=000)
+            # HTTPS advisory check (non-blocking)
             HTTPS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
               --resolve "$API_HOSTNAME:443:127.0.0.1" \
               -H "Host: $API_HOSTNAME" \
               "https://127.0.0.1/health" --insecure 2>/dev/null || echo "000")
-            if [ "$HTTPS_STATUS" = "200" ]; then
-              echo "✓ HTTPS advisory check passed (HTTP $HTTPS_STATUS)"
-            else
-              echo "⚠ HTTPS advisory status=$HTTPS_STATUS (host→Docker TCP routing; in-network check is authoritative)"
-            fi
+            [ "$HTTPS_STATUS" != "200" ] && \
+              echo "[DEPLOY] HTTPS advisory status=$HTTPS_STATUS (host→Docker TCP routing; in-network check is authoritative)"
 
-            echo "✓ Infra sync completed in $(($(date +%s) - T0))s"
+            echo "[DEPLOY] Infra sync completed in $(($(date +%s) - T0))s"
 
   # ---------------------------------------------------------------------------
   # JOB: sync-monitoring  (Step F)
@@ -925,7 +894,7 @@ jobs:
           script: |
             set -euo pipefail
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
-            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             chmod +x scripts/monitoring-sync.sh
             ./scripts/monitoring-sync.sh
@@ -984,36 +953,28 @@ jobs:
           script: |
             set -euo pipefail
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
-            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             source scripts/load-env.sh
-            echo "=== Checking /health via VPS (API_HOSTNAME=$API_HOSTNAME) ==="
             for i in $(seq 1 30); do
-              echo "---- Attempt $i ----"
-              # Phase 1: in-network (source of truth) via HTTPS with -k
-              INNET_BODY=$(docker run --rm --network api_network \
-                curlimages/curl:8.7.1 -sk --max-time 5 https://nginx/health 2>/dev/null || echo "")
-              if echo "$INNET_BODY" | grep -q '"status":"ok"'; then
-                echo "✓ /health OK via in-network (attempt $i)"
+              # Phase 1: in-network (source of truth)
+              if docker run --rm --network api_network \
+                curlimages/curl:8.7.1 -sk --max-time 5 https://nginx/health 2>/dev/null \
+                | grep -q '"status":"ok"'; then
+                echo "[DEPLOY] /health OK (in-network, attempt $i)"
                 exit 0
               fi
-              # Phase 2: HTTPS advisory (--insecure for Cloudflare origin cert; status=000 = host→Docker TCP issue)
-              STATUS=$(curl -sS \
-                --resolve "${API_HOSTNAME}:443:127.0.0.1" \
-                -o /tmp/resp.txt \
-                -w "%{http_code}" \
-                https://${API_HOSTNAME}/health \
-                --insecure 2>/dev/null || echo "000")
-              BODY=$(cat /tmp/resp.txt 2>/dev/null || echo "")
-              echo "HTTP: $STATUS  BODY: $BODY"
-              if [ "$STATUS" = "200" ] && echo "$BODY" | grep -q '"status":"ok"'; then
-                echo "✓ /health OK via HTTPS (attempt $i)"
+              # Phase 2: HTTPS advisory (status=000 = host→Docker TCP issue, non-fatal)
+              STATUS=$(curl -s --resolve "${API_HOSTNAME}:443:127.0.0.1" \
+                -o /dev/null -w "%{http_code}" \
+                "https://${API_HOSTNAME}/health" --insecure 2>/dev/null || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "[DEPLOY] /health OK (HTTPS advisory, attempt $i)"
                 exit 0
               fi
-              [ "$STATUS" = "000" ] && echo "⚠ HTTPS status=000 (host→Docker routing; in-network is authoritative)"
               sleep 2
             done
-            echo "❌ /health failed after 30 attempts"
+            echo "::error::Health check failed after 30 attempts"
             exit 1
 
       - name: Wait for /health endpoint (final public check)
@@ -1025,36 +986,28 @@ jobs:
           script: |
             set -euo pipefail
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
-            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             source scripts/load-env.sh
-            echo "=== Final health check via public endpoint (API_HOSTNAME=$API_HOSTNAME) ==="
             for i in $(seq 1 10); do
-              echo "---- Attempt $i ----"
-              # Phase 1: in-network (source of truth) via HTTPS with -k
-              INNET_BODY=$(docker run --rm --network api_network \
-                curlimages/curl:8.7.1 -sk --max-time 5 https://nginx/health 2>/dev/null || echo "")
-              if echo "$INNET_BODY" | grep -q '"status":"ok"'; then
-                echo "✓ /health OK via in-network (attempt $i)"
+              # Phase 1: in-network (source of truth)
+              if docker run --rm --network api_network \
+                curlimages/curl:8.7.1 -sk --max-time 5 https://nginx/health 2>/dev/null \
+                | grep -q '"status":"ok"'; then
+                echo "[DEPLOY] /health OK (in-network, attempt $i)"
                 exit 0
               fi
-              # Phase 2: HTTPS advisory (--insecure for Cloudflare origin cert; status=000 = host→Docker TCP issue)
-              STATUS=$(curl -sS \
-                --resolve "${API_HOSTNAME}:443:127.0.0.1" \
-                -o /tmp/resp.txt \
-                -w "%{http_code}" \
-                https://${API_HOSTNAME}/health \
-                --insecure 2>/dev/null || echo "000")
-              BODY=$(cat /tmp/resp.txt 2>/dev/null || echo "")
-              echo "HTTP: $STATUS  BODY: $BODY"
-              if [ "$STATUS" = "200" ] && echo "$BODY" | grep -q '"status":"ok"'; then
-                echo "✓ /health OK via HTTPS (attempt $i)"
+              # Phase 2: HTTPS advisory
+              STATUS=$(curl -s --resolve "${API_HOSTNAME}:443:127.0.0.1" \
+                -o /dev/null -w "%{http_code}" \
+                "https://${API_HOSTNAME}/health" --insecure 2>/dev/null || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "[DEPLOY] /health OK (HTTPS advisory, attempt $i)"
                 exit 0
               fi
-              [ "$STATUS" = "000" ] && echo "⚠ HTTPS status=000 (host→Docker routing; in-network is authoritative)"
               sleep 2
             done
-            echo "❌ /health failed after 10 attempts"
+            echo "::error::Final health check failed after 10 attempts"
             exit 1
 
       - name: Run smoke tests
@@ -1080,14 +1033,10 @@ jobs:
 
       - name: Deployment summary
         run: |
-          echo "====================================================="
-          echo " Production Deployment: COMPLETE ✅"
-          echo "====================================================="
-          echo "  Commit:   ${{ github.sha }}"
-          echo "  /health:  OK"
-          echo "  /ready:   OK"
-          echo "  Smoke:    passed"
-          echo "====================================================="
+          echo "[DEPLOY] Production deployment complete"
+          echo "  Commit : ${{ github.sha }}"
+          echo "  Health : OK"
+          echo "  Smoke  : passed"
 
   # ---------------------------------------------------------------------------
   # JOB: rollback
@@ -1114,14 +1063,13 @@ jobs:
     steps:
       - name: Log rollback trigger
         run: |
-          echo "ROLLBACK_TRIGGERED=TRUE | FAILED_JOBS:"
-          [ "${{ needs.vps-readiness-check.result }}" = "failure" ] && echo "  - vps-readiness-check"
-          [ "${{ needs.deploy.result }}" = "failure" ] && echo "  - deploy"
-          [ "${{ needs.api-health-gate.result }}" = "failure" ] && echo "  - api-health-gate"
-          [ "${{ needs.sync-infra.result }}" = "failure" ] && echo "  - sync-infra"
-          [ "${{ needs.sync-monitoring.result }}" = "failure" ] && echo "  - sync-monitoring"
-          [ "${{ needs.health-and-smoke.result }}" = "failure" ] && echo "  - health-and-smoke"
-          echo "SHA=${{ github.sha }}"
+          echo "::error::Rollback triggered — SHA=${{ github.sha }}"
+          [ "${{ needs.vps-readiness-check.result }}" = "failure" ] && echo "  [ERROR] failed job: vps-readiness-check" || true
+          [ "${{ needs.deploy.result }}" = "failure" ] && echo "  [ERROR] failed job: deploy" || true
+          [ "${{ needs.api-health-gate.result }}" = "failure" ] && echo "  [ERROR] failed job: api-health-gate" || true
+          [ "${{ needs.sync-infra.result }}" = "failure" ] && echo "  [ERROR] failed job: sync-infra" || true
+          [ "${{ needs.sync-monitoring.result }}" = "failure" ] && echo "  [ERROR] failed job: sync-monitoring" || true
+          [ "${{ needs.health-and-smoke.result }}" = "failure" ] && echo "  [ERROR] failed job: health-and-smoke" || true
 
       - name: Rollback on VPS
         uses: appleboy/ssh-action@v1.0.3
@@ -1132,16 +1080,10 @@ jobs:
           script: |
             set -euo pipefail
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
-            echo "USER=$(whoami)"
-            echo "HOME=$HOME"
-            echo "PWD=$(pwd)"
-            ls -la "$HOME"
-            ls -la "$HOME/api"
-            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
+            [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             chmod +x scripts/*.sh
             ./scripts/rollback.sh --auto
-            
-            # Log final state
+
             ACTIVE_SLOT=$(cat /var/run/api/active-slot 2>/dev/null || echo "unknown")
-            echo "ROLLBACK_COMPLETE | ACTIVE_SLOT=$ACTIVE_SLOT | SHA=${{ github.sha }}"
+            echo "[DEPLOY] Rollback complete — slot=$ACTIVE_SLOT sha=${{ github.sha }}"
