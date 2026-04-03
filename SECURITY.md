@@ -40,26 +40,31 @@ You will receive an acknowledgement within **48 hours** and a resolution timelin
 **Context:**
 - This project uses ES256 (ECDSA, asymmetric) JWTs issued by Supabase
 - `@fastify/jwt` package has a transitive dependency on `fast-jwt@^6.0.2`, which is vulnerable
-- However, **production code NEVER uses `fast-jwt` directly**
+- However, **@fastify/jwt is ONLY used in tests** (moved to devDependencies)
+- **Production code NEVER loads @fastify/jwt or fast-jwt**
 
 **Mitigation:**
 - **Production:** Uses `jsonwebtoken` + `jwks-rsa` for verification (completely separate library, not vulnerable)
 - **Tests:** Uses `@fastify/jwt` (HS256, test-only, matches test secret in CI environment)
-- **Enforcement:** `algorithms: ["ES256"]` is explicitly set in jwtVerifier.ts (line 107)
-- **Defense-in-depth:** Header algorithm is validated before signature verification (extra safety)
+- **Enforcement:** `algorithms: ["ES256"]` is explicitly set in jwtVerifier.ts
+- **Defense-in-depth:** Header algorithm is validated before signature verification (3 layers total)
+- **Dependency boundary:** CI verifies `@fastify/jwt` is NOT in production bundle
 
-**Risk Level:** LOW
+**Risk Level:** NONE
 
 **Why this is safe:**
 1. Asymmetric keys (JWKS endpoint): CVE-2023-48223 exploits symmetric key confusion, which cannot happen with asymmetric keys
 2. Explicit algorithm restriction to ES256 prevents fallback to HS256
 3. Token audience is validated (blocks service_role tokens)
-4. Test environment is isolated; fast-jwt is not used in production
+4. Test environment is isolated; @fastify/jwt only used in test server
+5. Production dependencies do NOT include @fastify/jwt or fast-jwt (verified by CI)
+6. No fast-jwt code can execute in production (dependency not present)
 
 **Monitoring:**
-- Waiting for upstream `fast-jwt` fix
-- CI audit check overrides only for "critical" level (not "high")
-- `@fastify/jwt` will be updated when fast-jwt is fixed
+- CI checks: `npm ls @fastify/jwt --prod` (verifies not in production)
+- Audit level: `--audit-level=critical` (only critical runtime vulnerabilities fail)
+- Package.json: @fastify/jwt moved to devDependencies
+- Waiting for upstream fast-jwt fix anyway
 
 ---
 
