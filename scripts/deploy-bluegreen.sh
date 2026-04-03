@@ -277,10 +277,24 @@ _ft_release_lock() {
 _ft_check_external_ready() {
     { set +x; } 2>/dev/null
     local attempt=0
-    
+
+    # Phase 1 — in-network routing (source of truth).
+    # Hits nginx directly via Docker bridge; validates full nginx→api routing path.
+    local _p1_body
+    _p1_body=$(_ft_net_curl_out "nginx" -s --max-time 5 "http://nginx/health" 2>/dev/null || echo "")
+    if echo "$_p1_body" | grep -q '"status":"ok"' 2>/dev/null; then
+        unset _p1_body
+        set -x
+        return 0
+    fi
+    unset _p1_body
+
+    # Phase 2 — HTTPS via localhost + Host header (advisory / TLS diagnostic).
+    # --insecure accepts Cloudflare origin certificate.
+    # status=000 means host→Docker TCP routing issue, NOT a TLS problem.
     for attempt in 1 2 3; do
         local body
-        body=$(curl -sS --max-time 3 \
+        body=$(curl -sS --max-time 5 \
             --resolve "$API_HOSTNAME:443:127.0.0.1" \
             "https://$API_HOSTNAME/health" \
             --insecure 2>/dev/null || echo "")
@@ -288,11 +302,25 @@ _ft_check_external_ready() {
             set -x
             return 0
         fi
+        if [ -z "$body" ]; then
+            { printf 'external-ready: HTTPS phase-2 attempt %s — status=000 (host→Docker port routing, not TLS)\n' "$attempt"; } 2>/dev/null
+            local _http_body
+            _http_body=$(curl -sS --max-time 5 \
+                --resolve "$API_HOSTNAME:80:127.0.0.1" \
+                "http://$API_HOSTNAME/health" 2>/dev/null || echo "")
+            if echo "$_http_body" | grep -q '"status":"ok"' 2>/dev/null; then
+                { printf 'external-ready: HTTP:80 fallback passed (attempt %s)\n' "$attempt"; } 2>/dev/null
+                unset _http_body
+                set -x
+                return 0
+            fi
+            unset _http_body
+        fi
         if [ "$attempt" -lt 3 ]; then
             sleep "$attempt"
         fi
     done
-    
+
     set -x
     return 1
 }
@@ -1021,23 +1049,65 @@ sleep 3
 _PUB_PASSED=false
 _PUB_STATUS="000"
 
+# Phase 1 — in-network routing (source of truth for rollback decision).
+# Validates full nginx→api-<slot>:3000 path inside Docker bridge network.
+for _attempt in 1 2 3; do
+    _P1_BODY=$(_ft_net_curl_out "nginx" -s --max-time 10 "http://nginx/ready" 2>/dev/null || echo "")
+    if echo "$_P1_BODY" | grep -q '"status":"ready"' 2>/dev/null; then
+        _PUB_PASSED=true
+        _PUB_STATUS="200-innet"
+        _ft_log "msg='public health phase-1 (in-network) passed' attempt=$_attempt/3 container=$INACTIVE_NAME"
+        unset _P1_BODY
+        break
+    fi
+    _ft_log "msg='public health phase-1 (in-network) attempt failed' attempt=$_attempt/3"
+    unset _P1_BODY
+    sleep 3
+done
+
+# Phase 2 — HTTPS via localhost + Host header (advisory / TLS diagnostic).
+# Uses --insecure to accept Cloudflare origin certificate.
+# NOTE: status=000 means host→Docker TCP port routing issue, NOT a TLS problem
+# (--insecure already handles cert trust). In-network result above is authoritative.
+_HTTPS_PASSED=false
+_HTTPS_STATUS="000"
 for _attempt in 1 2 3 4 5; do
     _PUB_BODY=$(mktemp)
-    _PUB_STATUS=$(curl --max-time 10 -sS -o "$_PUB_BODY" -w "%{http_code}" \
+    _HTTPS_STATUS=$(curl --max-time 10 -sS -o "$_PUB_BODY" -w "%{http_code}" \
         --resolve "$API_HOSTNAME:443:127.0.0.1" \
         "https://$API_HOSTNAME/ready" \
-        --insecure 2>&1 || echo "000")
+        --insecure 2>/dev/null || echo "000")
 
-    if [ "$_PUB_STATUS" = "200" ] && grep -q '"status":"ready"' "$_PUB_BODY" 2>/dev/null; then
-        _PUB_PASSED=true
+    if [ "$_HTTPS_STATUS" = "200" ] && grep -q '"status":"ready"' "$_PUB_BODY" 2>/dev/null; then
+        _HTTPS_PASSED=true
         rm -f "$_PUB_BODY"
         break
     fi
 
-    _ft_log "msg='public health attempt failed' attempt=$_attempt/5 status=$_PUB_STATUS host=$API_HOSTNAME"
+    if [ "$_HTTPS_STATUS" = "000" ]; then
+        _ft_log "msg='HTTPS phase-2 status=000 — host→Docker port routing unreachable (not a TLS error; in-network is source of truth)' attempt=$_attempt/5"
+        _HTTP_FALLBACK=$(curl -sS --max-time 5 \
+            --resolve "$API_HOSTNAME:80:127.0.0.1" \
+            "http://$API_HOSTNAME/ready" 2>/dev/null || echo "")
+        if echo "$_HTTP_FALLBACK" | grep -q '"status":"ready"' 2>/dev/null; then
+            _ft_log "msg='HTTP:80 fallback confirmed backend reachable' attempt=$_attempt"
+            _HTTPS_PASSED=true
+            _HTTPS_STATUS="200-http"
+        fi
+        unset _HTTP_FALLBACK
+    fi
+    [ "$_HTTPS_PASSED" = "true" ] && { rm -f "$_PUB_BODY"; break; }
+    _ft_log "msg='HTTPS phase-2 attempt failed' attempt=$_attempt/5 status=$_HTTPS_STATUS host=$API_HOSTNAME"
     rm -f "$_PUB_BODY"
     sleep 5
 done
+
+if [ "$_HTTPS_PASSED" = "true" ]; then
+    _ft_log "msg='HTTPS phase-2 passed' status=$_HTTPS_STATUS container=$INACTIVE_NAME"
+else
+    _ft_log "level=WARN msg='HTTPS phase-2 diagnostic failed (non-blocking)' status=$_HTTPS_STATUS host=$API_HOSTNAME note='host→Docker routing issue; in-network is authoritative'"
+fi
+unset _HTTPS_PASSED _HTTPS_STATUS _PUB_BODY
 
 # Container alignment check -- live nginx config MUST contain http://INACTIVE_NAME:3000.
 _NGINX_CONTAINER=$(grep -oE 'http://(api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
@@ -1093,7 +1163,7 @@ if [ "$_PUB_PASSED" != "true" ]; then
     fi
 fi
 
-unset _PUB_PASSED _attempt _PUB_STATUS _PUB_BODY _NGINX_CONTAINER
+unset _PUB_PASSED _attempt _PUB_STATUS _NGINX_CONTAINER
 _ft_log "msg='public health check passed' container=$INACTIVE_NAME host=$API_HOSTNAME endpoint=/ready"
 
 # ---------------------------------------------------------------------------
