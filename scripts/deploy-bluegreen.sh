@@ -171,6 +171,39 @@ _ft_final_state() {
 }
 
 # ---------------------------------------------------------------------------
+# DOCKER HEALTH GATE
+# Waits for the container's HEALTHCHECK to reach "healthy" before allowing
+# nginx to switch. If the container has no HEALTHCHECK defined, this returns
+# immediately (status="none") to avoid blocking on unconfigured containers.
+# ---------------------------------------------------------------------------
+_ft_wait_docker_health() {
+    local name="$1"
+    local i=1
+    local STATUS
+    while [ "$i" -le 30 ]; do
+        STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$name" 2>/dev/null || echo "none")
+        if [ "$STATUS" = "healthy" ]; then
+            _ft_log "msg='docker health check passed' container=$name"
+            return 0
+        fi
+        if [ "$STATUS" = "unhealthy" ]; then
+            _ft_error "msg='docker health check failed' container=$name status=unhealthy"
+            return 1
+        fi
+        # "none" means the image has no HEALTHCHECK — skip gate (return 0 immediately)
+        if [ "$STATUS" = "none" ]; then
+            _ft_log "msg='docker health gate skipped (no HEALTHCHECK defined)' container=$name"
+            return 0
+        fi
+        [ $(( i % 5 )) -eq 0 ] && _ft_log "msg='waiting for docker health' attempt=$i/30 status=$STATUS container=$name"
+        sleep 2
+        i=$(( i + 1 ))
+    done
+    _ft_error "msg='docker health timeout' container=$name last_status=$STATUS"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 # SYSTEM SNAPSHOT -- emitted on any unrecoverable failure
 # ---------------------------------------------------------------------------
 _ft_snapshot() {
@@ -991,7 +1024,35 @@ _ft_log "msg='phase_complete' phase=HEALTH_CHECK_INTERNAL status=success contain
 _ft_phase_end "HEALTH_CHECK_INTERNAL"
 
 # ---------------------------------------------------------------------------
-# [5/7] SWITCH NGINX UPSTREAM
+# DOCKER HEALTH GATE
+# Ensures the container's HEALTHCHECK has settled to "healthy" before
+# switching nginx. Prevents routing to a container that is "starting".
+# ---------------------------------------------------------------------------
+if ! _ft_wait_docker_health "$INACTIVE_NAME"; then
+    docker logs "$INACTIVE_NAME" --tail 50 >&2 || true
+    docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
+    docker rm "$INACTIVE_NAME" || true
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=docker_health_failed container=$INACTIVE_NAME"
+fi
+
+# STABILIZATION DELAY -- brief pause after docker health gate to let
+# any in-flight connection setup settle (TLS session init, worker warm-up).
+_ft_log "msg='stabilization delay' container=$INACTIVE_NAME"
+sleep 3
+
+# PRE-SWITCH CONNECTIVITY CHECK
+# Direct in-network probe of the new container BEFORE touching nginx.
+# Validates Docker DNS resolution + bridge routing work for the new container
+# one final time with a clean, fresh curl invocation.
+if ! docker run --rm --network "$NETWORK" "$_FT_CURL_IMG" \
+       -sf --max-time 5 "http://$INACTIVE_NAME:$APP_PORT/ready" >/dev/null 2>&1; then
+    _ft_error "msg='pre-switch connectivity check failed' container=$INACTIVE_NAME"
+    docker logs "$INACTIVE_NAME" --tail 50 >&2 || true
+    docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
+    docker rm "$INACTIVE_NAME" || true
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=pre_switch_connectivity_failed container=$INACTIVE_NAME"
+fi
+_ft_log "msg='pre-switch connectivity check passed' container=$INACTIVE_NAME"
 # ---------------------------------------------------------------------------
 _ft_state "SWITCH_NGINX" "msg='switching nginx upstream' container=$INACTIVE_NAME"
 
@@ -1112,6 +1173,27 @@ if [ "$_POST_SWITCH_OK" != "true" ]; then
 fi
 unset _POST_SWITCH_OK _ps
 _ft_log "msg='post-switch routing verification passed'"
+
+# POST-SWITCH UPSTREAM VERIFICATION
+# Directly probe the new container via its in-network address after nginx
+# has confirmed routing. Ensures the upstream backend itself is still
+# responding — nginx routing healthy does NOT imply backend healthy.
+if ! docker run --rm --network "$NETWORK" "$_FT_CURL_IMG" \
+       -sf --max-time 5 "http://$INACTIVE_NAME:$APP_PORT/ready" >/dev/null 2>&1; then
+    _ft_error "msg='post-switch upstream verification failed' container=$INACTIVE_NAME"
+    _ft_snapshot
+    cp "$NGINX_BACKUP" "$NGINX_CONF"
+    if docker exec nginx nginx -t >/dev/null 2>&1 && docker exec nginx nginx -s reload >/dev/null 2>&1; then
+        _ft_log "msg='nginx restored (post-switch upstream failure)'"
+    else
+        _ft_log "level=ERROR msg='nginx restore failed during upstream verification rollback'"
+    fi
+    _ft_write_slot "$ACTIVE"
+    docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
+    docker rm "$INACTIVE_NAME" || true
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=post_switch_upstream_failed container=$INACTIVE_NAME"
+fi
+_ft_log "msg='post-switch upstream verification passed' container=$INACTIVE_NAME"
 
 # ---------------------------------------------------------------------------
 # [6/7] PUBLIC HEALTH CHECK (end-to-end nginx routing)

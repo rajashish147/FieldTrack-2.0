@@ -192,7 +192,7 @@ for f in "${REQUIRED_ENV_FILES[@]}"; do
 done
 
 # .env.monitoring is optional (monitoring-sync.sh self-heals from example)
-if [ ! -f "$DEPLOY_ROOT/.env.monitoring" ]; then
+if [ ! -f "$DEPLOY_ROOT/infra/.env.monitoring" ]; then
   warn ".env.monitoring not found — monitoring-sync.sh will create it from example during deploy."
 fi
 
