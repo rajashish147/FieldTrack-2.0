@@ -29,7 +29,10 @@ permissions:
   security-events: write
 
 jobs:
-  analyze-deep:
+  # Job name MUST stay "codeql-deep" — deploy.yml polls for this exact status
+  # check, and branch protection on master references it as:
+  # "CodeQL — Deep Scan (post-merge) / codeql-deep"
+  codeql-deep:
     name: Deep Analyze (CodeQL)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -68,9 +71,6 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: "codeql-deep"
-          # Upload unconditionally — results land in the Security tab regardless
-          # of whether any alerts are found.
-          upload: always
 
       - name: Write deep-scan summary
         if: always()

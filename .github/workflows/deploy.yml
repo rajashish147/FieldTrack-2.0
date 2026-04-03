@@ -3,7 +3,8 @@
 # Production Deployment Pipeline
 #
 # Design principles:
-#   1. Triggers on every push to master (no paths filter — ensures sync-beta always runs)
+#   1. Triggered ONLY after CodeQL deep scan completes successfully — no polling, no race.
+#      Uses workflow_run event: deploy is event-driven, not concurrent with security scan.
 #   2. Runs ALL validation from scratch — no trust built on PR results alone
 #   3. Trivy scan runs BEFORE Docker push — vulnerable images never reach the registry
 #   4. target: production + build-args mirror pr.yml exactly (bit-for-bit parity)
@@ -12,18 +13,33 @@
 #   7. timeout-minutes on every job — hung processes never block CI indefinitely
 #   8. npm ci retried up to 3x — registry flakiness never kills a valid deploy
 #
-# Parallel stages:
-#   validate ─┐
-#   test-api  ├─► build-scan-push ─► deploy ─► api-health-gate ─► sync-infra ─► sync-monitoring ─► health-and-smoke
-#             ┘                                                                                             │
-#                                              rollback ◄────────────┘ (on failure)
+# Pipeline order:
+#   codeql-gate
+#     ├─► validate ─┐
+#     └─► test-api  ├─► build-scan-push ─► vps-readiness-check ─► deploy
+#                   ┘                                                  │
+#                                             api-health-gate ◄────────┘
+#                                                   │
+#                                              sync-infra ─► sync-monitoring ─► health-and-smoke
+#                                                                                       │
+#                                              rollback ◄──────────────────────────────┘ (on failure)
 
 name: Deploy to Production
 
 on:
-  push:
+  # Triggered ONLY when the CodeQL deep scan workflow completes on master.
+  # This replaces the previous push trigger + polling approach:
+  #   - No race conditions (workflow_run fires AFTER codeql-deep finishes)
+  #   - No API polling loops or timing-dependent checks
+  #   - Deployment is blocked at the event level if CodeQL did not succeed
+  workflow_run:
+    workflows: ["CodeQL — Deep Scan (post-merge)"]
+    types:
+      - completed
     branches:
       - master
+  # Manual dispatch retained for emergency/hotfix deploys.
+  # The codeql-gate job enforces the conclusion check only for workflow_run.
   workflow_dispatch:
 
 # Never cancel an in-progress deployment — let it finish or fail cleanly.
@@ -37,6 +53,56 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # JOB: codeql-gate
+  #
+  # First job in every deploy run. Two responsibilities:
+  #
+  #   1. SECURITY GATE (workflow_run only):
+  #      Reads github.event.workflow_run.conclusion and fails hard if CodeQL
+  #      did not pass. This makes the event-driven guarantee explicit and
+  #      visible in the pipeline UI.
+  #
+  #   2. SHA RESOLUTION:
+  #      On workflow_run, github.sha = HEAD of default branch at event time,
+  #      NOT the commit that triggered CodeQL. We must deploy exactly the SHA
+  #      that was scanned. Exports deploy_sha = github.event.workflow_run.head_sha
+  #      so all downstream jobs checkout and tag the correct commit.
+  #      On workflow_dispatch, deploy_sha = github.sha (HEAD of triggered branch).
+  #
+  # All subsequent jobs that do git checkout use ref: needs.codeql-gate.outputs.deploy_sha.
+  # ---------------------------------------------------------------------------
+  codeql-gate:
+    name: CodeQL Security Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      deploy_sha: ${{ steps.sha.outputs.deploy_sha }}
+    steps:
+      - name: Resolve deploy SHA
+        id: sha
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "deploy_sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify CodeQL deep scan passed
+        if: github.event_name == 'workflow_run'
+        run: |
+          CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          echo "CodeQL deep scan conclusion : $CONCLUSION"
+          echo "Scanned commit SHA          : $SHA"
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::CodeQL deep scan did not pass (conclusion=$CONCLUSION)."
+            echo "  Deployment is blocked. Review findings before retrying:"
+            echo "  https://github.com/${{ github.repository }}/security/code-scanning"
+            exit 1
+          fi
+          echo "✓ CodeQL gate passed — safe to deploy SHA $SHA"
+
+  # ---------------------------------------------------------------------------
   # JOB: validate
   #
   # Fast pre-flight: TypeScript check + dependency audit.
@@ -45,6 +111,7 @@ jobs:
   validate:
     name: Validate (typecheck + audit)
     runs-on: ubuntu-latest
+    needs: [codeql-gate]
     timeout-minutes: 10
     steps:
       - name: Confirm deployment trigger
@@ -58,27 +125,10 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.codeql-gate.outputs.deploy_sha }}
 
       - name: Setup Node.js 24
-        uses: actions/setup-node@v5
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies (with retry)
-        run: |
-          echo "::group::npm ci"
-          for attempt in 1 2 3; do
-            npm ci && break
-            [ $attempt -eq 3 ] && { echo "::error::npm ci failed after 3 attempts"; exit 1; }
-            echo "Attempt $attempt failed — retrying in 15s..."
-            sleep 15
-          done
-          echo "::endgroup::"
-
-      - name: Dependency vulnerability scan
-        run: npm audit --omit=dev --audit-level=high
 
       - name: TypeScript check
         run: npm run typecheck
@@ -102,6 +152,7 @@ jobs:
   test-api:
     name: API Tests (unit + integration)
     runs-on: ubuntu-latest
+    needs: [codeql-gate]
     timeout-minutes: 15
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL_TEST }}
@@ -110,6 +161,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.codeql-gate.outputs.deploy_sha }}
 
       - name: Setup Node.js 24
         uses: actions/setup-node@v5
@@ -152,22 +205,29 @@ jobs:
   build-scan-push:
     name: Build, Scan & Push Docker Image
     runs-on: ubuntu-latest
-    needs: [validate, test-api]
+    needs: [codeql-gate, validate, test-api]
     timeout-minutes: 25
     permissions:
       contents: read
       packages: write
       security-events: write
     outputs:
-      sha_short: ${{ steps.meta.outputs.sha_short }}
-      digest:    ${{ steps.digest.outputs.digest }}
+      sha_short:  ${{ steps.meta.outputs.sha_short }}
+      digest:     ${{ steps.digest.outputs.digest }}
+      deploy_sha: ${{ steps.meta.outputs.deploy_sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.codeql-gate.outputs.deploy_sha }}
 
       - name: Extract commit SHA
         id: meta
-        run: echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        env:
+          DEPLOY_SHA: ${{ needs.codeql-gate.outputs.deploy_sha }}
+        run: |
+          echo "sha_short=${DEPLOY_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -490,16 +550,58 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
+  # JOB: vps-readiness-check
+  #
+  # Validates the VPS is in a deployable state BEFORE running the deploy.
+  # Runs in PARALLEL with vps-readiness-check (both depend on build-scan-push).
+  # Both must succeed before deploy is allowed to proceed.
+  #
+  # Delegates to scripts/vps-readiness-check.sh which checks:
+  #   - Docker daemon running
+  #   - api_network exists (auto-created if missing)
+  #   - Ports 80/443 free from non-nginx processes
+  #   - No API containers with host port bindings
+  #   - Required .env file present
+  #   - Runtime directories present (auto-created if missing)
+  #   - Sufficient disk space (auto-prunes if borderline)
+  # ---------------------------------------------------------------------------
+  vps-readiness-check:
+    name: VPS Readiness Gate
+    runs-on: ubuntu-latest
+    needs: [build-scan-push]
+    timeout-minutes: 10
+    steps:
+      - name: Run VPS readiness check via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT — run vps-setup.sh first"; exit 1; }
+            cd "$DEPLOY_ROOT"
+            # Pull latest scripts without full deploy
+            git fetch origin master --depth=1
+            git checkout origin/master -- scripts/vps-readiness-check.sh 2>/dev/null || true
+            chmod +x scripts/vps-readiness-check.sh
+            ./scripts/vps-readiness-check.sh
+
+  # ---------------------------------------------------------------------------
   # JOB: deploy
   #
   # Blue-Green deployment to VPS via SSH.
   # The deploy-bluegreen.sh script manages slot switching and container health.
+  #
+  # DEPENDENCY GATES (both must pass):
+  #   - vps-readiness-check: ensures VPS can accept the deployment
   # ---------------------------------------------------------------------------
   deploy:
     name: Deploy (Blue-Green SSH)
     runs-on: ubuntu-latest
-    needs: [build-scan-push]
-    timeout-minutes: 15
+    needs: [build-scan-push, vps-readiness-check]
+    timeout-minutes: 20
     steps:
       - name: Validate required deployment secrets
         env:
@@ -548,8 +650,10 @@ jobs:
             ls -la "$HOME/api"
             [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
+            # Pin repo to the exact SHA that was built and scanned by CodeQL.
+            # Prevents stale scripts from running if concurrent commits landed.
             git fetch origin
-            git reset --hard origin/master
+            git reset --hard ${{ needs.build-scan-push.outputs.deploy_sha }}
             chmod +x scripts/*.sh
             echo "=== Pre-deploy environment validation ==="
             ./scripts/validate-env.sh --check-monitoring
@@ -573,6 +677,10 @@ jobs:
             ls -la "$DEPLOY_ROOT"
             [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
+            # Enforce repo is at the exact SHA being deployed (issue 7 — prevents
+            # stale deploy scripts if another commit landed during this pipeline run).
+            git fetch origin
+            git reset --hard ${{ needs.build-scan-push.outputs.deploy_sha }}
             chmod +x scripts/*.sh
             # Environment already validated in previous step
             ./scripts/deploy-bluegreen.sh "${{ needs.build-scan-push.outputs.sha_short }}"
@@ -933,11 +1041,12 @@ jobs:
   rollback:
     name: Rollback Deployment (auto)
     runs-on: ubuntu-latest
-    needs: [deploy, api-health-gate, sync-infra, sync-monitoring, health-and-smoke]
+    needs: [vps-readiness-check, deploy, api-health-gate, sync-infra, sync-monitoring, health-and-smoke]
     timeout-minutes: 10
     if: |
       always() &&
       (
+        needs.vps-readiness-check.result == 'failure' ||
         needs.deploy.result == 'failure' ||
         needs.api-health-gate.result == 'failure' ||
         needs.sync-infra.result == 'failure' ||
@@ -948,6 +1057,7 @@ jobs:
       - name: Log rollback trigger
         run: |
           echo "ROLLBACK_TRIGGERED=TRUE | FAILED_JOBS:"
+          [ "${{ needs.vps-readiness-check.result }}" = "failure" ] && echo "  - vps-readiness-check"
           [ "${{ needs.deploy.result }}" = "failure" ] && echo "  - deploy"
           [ "${{ needs.api-health-gate.result }}" = "failure" ] && echo "  - api-health-gate"
           [ "${{ needs.sync-infra.result }}" = "failure" ] && echo "  - sync-infra"

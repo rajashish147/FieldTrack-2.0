@@ -18,8 +18,10 @@ permissions:
   security-events: write
 
 jobs:
-  analyze:
-    name: Analyze (CodeQL)
+  # Job name MUST stay "codeql-lite" — branch protection references this exact
+  # status check: "CodeQL — PR Scan (lightweight) / codeql-lite"
+  codeql-lite:
+    name: CodeQL Lite (PR)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -59,4 +61,4 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
-          category: "codeql-pr"
+          category: "codeql-lite"

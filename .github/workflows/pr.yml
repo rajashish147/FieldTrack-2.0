@@ -5,8 +5,10 @@ on:
     branches:
       - master
 
+# Cancel stale runs for the same PR when new commits are pushed.
+# Uses workflow+ref so different PRs get independent concurrency groups.
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -274,3 +276,53 @@ jobs:
             -v /tmp/nginx.conf:/etc/nginx/conf.d/default.conf:ro \
             -v /tmp/ssl:/etc/ssl/api:ro \
             nginx:1.27-alpine nginx -t
+
+  # ---------------------------------------------------------------------------
+  # JOB: codeql-lite
+  #
+  # Lightweight CodeQL security scan — runs in PARALLEL with api-ci and infra-ci.
+  # Uses security-extended queries (OWASP Top-10 class) for fast PR feedback.
+  # This job is REQUIRED in branch protection; PRs cannot merge until it passes.
+  #
+  # Job name "codeql-lite" is the required status check identifier.
+  # Branch protection setting: "PR Validation / codeql-lite"
+  # ---------------------------------------------------------------------------
+  codeql-lite:
+    name: CodeQL Lite (Security Scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["javascript"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js (match production)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API (enables data-flow tracing)
+        run: npm run build || true
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "codeql-lite"
