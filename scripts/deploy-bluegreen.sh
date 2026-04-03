@@ -274,8 +274,9 @@ _ft_check_external_ready() {
 
     # Phase 1 — in-network routing (source of truth).
     # Hits nginx directly via Docker bridge; validates full nginx→api routing path.
+    # HTTPS with -k (skip cert) because nginx redirects HTTP to HTTPS.
     local _p1_body
-    _p1_body=$(_ft_net_curl_out "nginx" -s --max-time 5 "http://nginx/health" 2>/dev/null || echo "")
+    _p1_body=$(docker run --rm --network api_network curlimages/curl:8.7.1 -sk --max-time 5 "https://nginx/health" 2>/dev/null || echo "")
     if echo "$_p1_body" | grep -q '"status":"ok"' 2>/dev/null; then
         unset _p1_body
         set -x
@@ -999,8 +1000,8 @@ sleep 2
 _ft_log "msg='post-switch nginx routing verification (in-network)'"
 _POST_SWITCH_OK=false
 for _ps in 1 2 3 4 5; do
-    if _ft_net_curl "nginx" \
-           -sf --max-time 5 "http://nginx/health"; then
+    if docker run --rm --network api_network curlimages/curl:8.7.1 \
+           -sk --max-time 5 "https://nginx/health" >/dev/null 2>&1; then
         _POST_SWITCH_OK=true
         break
     fi
@@ -1044,8 +1045,9 @@ _PUB_STATUS="000"
 
 # Phase 1 — in-network routing (source of truth for rollback decision).
 # Validates full nginx→api-<slot>:3000 path inside Docker bridge network.
+# HTTPS with -k (skip cert) because nginx redirects HTTP to HTTPS.
 for _attempt in 1 2 3; do
-    _P1_BODY=$(_ft_net_curl_out "nginx" -s --max-time 10 "http://nginx/ready" 2>/dev/null || echo "")
+    _P1_BODY=$(docker run --rm --network api_network curlimages/curl:8.7.1 -sk --max-time 10 "https://nginx/ready" 2>/dev/null || echo "")
     if echo "$_P1_BODY" | grep -q '"status":"ready"' 2>/dev/null; then
         _PUB_PASSED=true
         _PUB_STATUS="200-innet"

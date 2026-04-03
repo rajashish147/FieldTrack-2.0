@@ -872,8 +872,8 @@ jobs:
             sleep 2  # Give Nginx a moment to fully apply reload
 
             ROUTE_STATUS=$(docker run --rm --network api_network \
-              curlimages/curl:8.7.1 -s -o /dev/null -w "%{http_code}" \
-              --max-time 10 http://nginx/health 2>/dev/null || echo "000")
+              curlimages/curl:8.7.1 -sk -o /dev/null -w "%{http_code}" \
+              --max-time 10 https://nginx/health 2>/dev/null || echo "000")
 
             if [ "$ROUTE_STATUS" = "200" ]; then
               echo "✓ Nginx routing verified via in-network check (HTTP $ROUTE_STATUS)"
@@ -990,9 +990,9 @@ jobs:
             echo "=== Checking /health via VPS (API_HOSTNAME=$API_HOSTNAME) ==="
             for i in $(seq 1 30); do
               echo "---- Attempt $i ----"
-              # Phase 1: in-network (source of truth)
+              # Phase 1: in-network (source of truth) via HTTPS with -k
               INNET_BODY=$(docker run --rm --network api_network \
-                curlimages/curl:8.7.1 -s --max-time 5 http://nginx/health 2>/dev/null || echo "")
+                curlimages/curl:8.7.1 -sk --max-time 5 https://nginx/health 2>/dev/null || echo "")
               if echo "$INNET_BODY" | grep -q '"status":"ok"'; then
                 echo "✓ /health OK via in-network (attempt $i)"
                 exit 0
@@ -1031,9 +1031,9 @@ jobs:
             echo "=== Final health check via public endpoint (API_HOSTNAME=$API_HOSTNAME) ==="
             for i in $(seq 1 10); do
               echo "---- Attempt $i ----"
-              # Phase 1: in-network (source of truth)
+              # Phase 1: in-network (source of truth) via HTTPS with -k
               INNET_BODY=$(docker run --rm --network api_network \
-                curlimages/curl:8.7.1 -s --max-time 5 http://nginx/health 2>/dev/null || echo "")
+                curlimages/curl:8.7.1 -sk --max-time 5 https://nginx/health 2>/dev/null || echo "")
               if echo "$INNET_BODY" | grep -q '"status":"ok"'; then
                 echo "✓ /health OK via in-network (attempt $i)"
                 exit 0
