@@ -624,23 +624,30 @@ jobs:
 
             # Determine active slot (blue/green)
             ACTIVE_SLOT=$(cat /var/run/api/active-slot 2>/dev/null || echo "blue")
-            if [ "$ACTIVE_SLOT" = "green" ]; then BACKEND_PORT=3002; else BACKEND_PORT=3001; fi
-            
-            echo "=== API Health Gate (slot: $ACTIVE_SLOT, port: $BACKEND_PORT) ==="
-            
-            # Poll /ready endpoint (internal readiness probe)
+            ACTIVE_CONTAINER="api-$ACTIVE_SLOT"
+
+            echo "=== API Health Gate (slot: $ACTIVE_SLOT, container: $ACTIVE_CONTAINER) ==="
+
+            # Guard: container must exist before we try to reach it
+            docker inspect "$ACTIVE_CONTAINER" >/dev/null 2>&1 || {
+              echo "❌ Container $ACTIVE_CONTAINER not found"
+              exit 1
+            }
+
+            # Poll /ready via Docker service DNS (no host port binding needed)
             for i in $(seq 1 15); do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$BACKEND_PORT/ready" 2>/dev/null || echo "000")
+              STATUS=$(docker exec "$ACTIVE_CONTAINER" \
+                curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000/ready" 2>/dev/null || echo "000")
               if [ "$STATUS" = "200" ]; then
-                echo "✓ API ready on port $BACKEND_PORT (attempt $i)"
+                echo "✓ API ready (container $ACTIVE_CONTAINER, attempt $i)"
                 exit 0
               fi
               echo "  Attempt $i: HTTP $STATUS — waiting..."
               sleep 2
             done
-            
+
             echo "❌ API /ready did not return 200 after 30s — monitoring sync would fail anyway"
-            docker logs "api-$ACTIVE_SLOT" --tail 30 2>/dev/null || true
+            docker logs "$ACTIVE_CONTAINER" --tail 30 2>/dev/null || true
             exit 1
 
   # ---------------------------------------------------------------------------
@@ -673,11 +680,12 @@ jobs:
             [ -d "$DEPLOY_ROOT" ] || { echo "❌ DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
             INFRA_DIR="$DEPLOY_ROOT/infra"
-            NGINX_LIVE="/etc/nginx/sites-enabled/api.conf"
+            NGINX_LIVE="$DEPLOY_ROOT/infra/nginx/live/api.conf"
+            NGINX_BACKUP_DIR="$DEPLOY_ROOT/infra/nginx/backup"
             ACTIVE_SLOT_FILE="/var/run/api/active-slot"
 
             ACTIVE_SLOT=$(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || echo "blue")
-            if [ "$ACTIVE_SLOT" = "green" ]; then BACKEND_PORT=3002; else BACKEND_PORT=3001; fi
+            ACTIVE_CONTAINER="api-$ACTIVE_SLOT"
 
             # Load env from .env — exports DEPLOY_ROOT, API_HOSTNAME, and all
             # app variables. DEPLOY_ROOT is already exported above; load-env.sh uses it.
@@ -685,22 +693,26 @@ jobs:
 
             echo "✓ API_HOSTNAME:    $API_HOSTNAME"
 
-            echo "=== Syncing Nginx (slot: $ACTIVE_SLOT, port: $BACKEND_PORT) ==="
-            sudo cp "$NGINX_LIVE" /tmp/api.conf.bak 2>/dev/null || true
+            # Ensure live/backup dirs exist
+            mkdir -p "$(dirname "$NGINX_LIVE")" "$NGINX_BACKUP_DIR"
+
+            echo "=== Syncing Nginx (slot: $ACTIVE_SLOT, container: $ACTIVE_CONTAINER) ==="
+            cp "$NGINX_LIVE" "$NGINX_BACKUP_DIR/api.conf.bak.$(date +%s)" 2>/dev/null || true
             NGINX_TMP=$(mktemp /tmp/fieldtrack-nginx.XXXXXX.conf)
             sed \
-              -e "s|__BACKEND_PORT__|$BACKEND_PORT|g" \
+              -e "s|__ACTIVE_CONTAINER__|$ACTIVE_CONTAINER|g" \
               -e "s|__API_HOSTNAME__|$API_HOSTNAME|g" \
               "$INFRA_DIR/nginx/api.conf" > "$NGINX_TMP"
-            sudo cp "$NGINX_TMP" "$NGINX_LIVE"
+            cp "$NGINX_TMP" "$NGINX_LIVE"
             rm -f "$NGINX_TMP"
 
-            if ! sudo nginx -t 2>&1; then
+            if ! docker exec nginx nginx -t 2>&1; then
               echo "Nginx test failed — restoring backup..."
-              sudo cp /tmp/api.conf.bak "$NGINX_LIVE"
+              LATEST_BAK=$(ls -1t "$NGINX_BACKUP_DIR"/api.conf.bak.* 2>/dev/null | head -1 || true)
+              [ -n "$LATEST_BAK" ] && cp "$LATEST_BAK" "$NGINX_LIVE"
               exit 1
             fi
-            sudo systemctl reload nginx
+            docker exec nginx nginx -s reload
             echo "✓ Nginx reloaded."
 
             # ROUTING VALIDATION — Test actual traffic through Nginx
@@ -718,8 +730,9 @@ jobs:
               echo "✓ Nginx routing verified (HTTP $ROUTE_STATUS)"
             else
               echo "❌ Nginx routing broken (HTTP $ROUTE_STATUS expected 200) — restoring backup..."
-              sudo cp /tmp/api.conf.bak "$NGINX_LIVE"
-              sudo nginx -t 2>&1 && sudo systemctl reload nginx || true
+              LATEST_BAK=$(ls -1t "$NGINX_BACKUP_DIR"/api.conf.bak.* 2>/dev/null | head -1 || true)
+              [ -n "$LATEST_BAK" ] && cp "$LATEST_BAK" "$NGINX_LIVE"
+              docker exec nginx nginx -t 2>&1 && docker exec nginx nginx -s reload || true
               exit 1
             fi
 

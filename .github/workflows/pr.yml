@@ -241,7 +241,7 @@ jobs:
         if: needs.detect-changes.outputs.infra == 'true'
         run: |
           sed \
-            -e 's/__BACKEND_PORT__/3001/g' \
+            -e 's/__ACTIVE_CONTAINER__/api-blue/g' \
             -e 's/__API_HOSTNAME__/api.test.local/g' \
             infra/nginx/api.conf > /tmp/nginx.conf
 

@@ -100,7 +100,7 @@ _ft_snapshot() {
     { set +x; } 2>/dev/null
     printf '[DEPLOY] -- SYSTEM SNAPSHOT ----------------------------------------\n' >&2
     printf '[DEPLOY]   slot_file  = %s\n' "$(cat "${ACTIVE_SLOT_FILE:-/var/run/api/active-slot}" 2>/dev/null || echo 'MISSING')" >&2
-    printf '[DEPLOY]   nginx_port = %s\n' "$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "${NGINX_CONF:-/etc/nginx/sites-enabled/api.conf}" 2>/dev/null | head -1 || echo 'unreadable')" >&2
+    printf '[DEPLOY]   nginx_upstream = %s\n' "$(grep -oE 'server (api-blue|api-green):3000' "${NGINX_CONF:-$HOME/api/infra/nginx/live/api.conf}" 2>/dev/null | head -1 || echo 'unreadable')" >&2
     printf '[DEPLOY]   containers =\n' >&2
     docker ps --format '[DEPLOY]     {{.Names}} -> {{.Status}} ({{.Ports}})' 1>&2 2>/dev/null \
         || printf '[DEPLOY]     (docker ps unavailable)\n' >&2
@@ -155,8 +155,6 @@ IMAGE_SHA="${1:-latest}"
 
 BLUE_NAME="api-blue"
 GREEN_NAME="api-green"
-BLUE_PORT=3001
-GREEN_PORT=3002
 APP_PORT=3000
 NETWORK="api_network"
 
@@ -172,7 +170,9 @@ REPO_DIR="$DEPLOY_ROOT"
 SLOT_DIR="/var/run/api"
 ACTIVE_SLOT_FILE="$SLOT_DIR/active-slot"
 
-NGINX_CONF="/etc/nginx/sites-enabled/api.conf"
+NGINX_CONF="$REPO_DIR/infra/nginx/live/api.conf"
+NGINX_LIVE_DIR="$REPO_DIR/infra/nginx/live"
+NGINX_BACKUP_DIR="$REPO_DIR/infra/nginx/backup"
 NGINX_TEMPLATE="$REPO_DIR/infra/nginx/api.conf"
 MAX_HISTORY=5
 MAX_HEALTH_ATTEMPTS=40
@@ -249,6 +249,29 @@ _ft_check_external_ready() {
         fi
     done
     
+    set -x
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# RETRY CURL -- wraps curl -sf with retries + 1s backoff
+#   _ft_retry_curl <url> [max_attempts=10] [extra curl flags...]
+#   Returns 0 on first 2xx success, 1 after all attempts exhausted.
+# ---------------------------------------------------------------------------
+_ft_retry_curl() {
+    { set +x; } 2>/dev/null
+    local url="$1"
+    local max="${2:-10}"
+    shift 2 || shift $#
+    local i=0
+    while [ "$i" -lt "$max" ]; do
+        i=$((i + 1))
+        if curl -sf --max-time 5 "$@" "$url" >/dev/null 2>&1; then
+            set -x
+            return 0
+        fi
+        sleep 1
+    done
     set -x
     return 1
 }
@@ -342,16 +365,16 @@ _ft_resolve_slot() {
         recovered_slot="green"
         _ft_log "msg='recovery: only green running' slot=green"
     elif [ "$blue_running" = "true" ] && [ "$green_running" = "true" ]; then
-        # Both running -- read nginx upstream port as authoritative tiebreaker.
-        local nginx_port
-        nginx_port=$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" 2>/dev/null | head -1 || echo "")
-        if [ "$nginx_port" = "$BLUE_PORT" ]; then recovered_slot="blue"
-        elif [ "$nginx_port" = "$GREEN_PORT" ]; then recovered_slot="green"
+        # Both running -- read nginx upstream container as authoritative tiebreaker.
+        local nginx_upstream
+        nginx_upstream=$(grep -oE 'server (api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
+        if [ "$nginx_upstream" = "api-blue" ]; then recovered_slot="blue"
+        elif [ "$nginx_upstream" = "api-green" ]; then recovered_slot="green"
         else
             recovered_slot="blue"
-            _ft_log "level=WARN msg='both containers running and nginx port ambiguous, defaulting to blue' nginx_port=${nginx_port}"
+            _ft_log "level=WARN msg='both containers running and nginx upstream ambiguous, defaulting to blue' nginx_upstream=${nginx_upstream}"
         fi
-        _ft_log "msg='recovery: both containers running, nginx tiebreaker' nginx_port=${nginx_port} slot=${recovered_slot}"
+        _ft_log "msg='recovery: both containers running, nginx tiebreaker' nginx_upstream=${nginx_upstream} slot=${recovered_slot}"
     else
         # Neither running -- first deploy.
         recovered_slot="green"
@@ -403,6 +426,25 @@ chmod 600 "$DEPLOY_ROOT/infra/.env.monitoring" 2>/dev/null || true
 
 _ft_log "msg='env contract validated'"
 
+# NGINX CONTAINER GUARD -- nginx MUST run as a Docker container on api_network.
+# With container-name upstreams (server api-blue:3000), Docker's embedded DNS
+# (127.0.0.11) is required for name resolution. This only works from WITHIN
+# Docker containers on the same network -- not from a host systemd nginx service.
+if ! docker inspect nginx >/dev/null 2>&1; then
+    _ft_log "level=ERROR msg='nginx container not found -- nginx must run as Docker container on api_network. Run: docker compose --env-file infra/.env.monitoring -f infra/docker-compose.monitoring.yml up -d nginx'"
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_container_missing"
+fi
+_NGINX_NETWORK=$(docker inspect nginx --format='{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null || echo "")
+if ! echo "$_NGINX_NETWORK" | grep -q "$NETWORK"; then
+    _ft_log "level=ERROR msg='nginx container not on api_network -- container DNS will fail' networks=${_NGINX_NETWORK}"
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_not_on_api_network networks=${_NGINX_NETWORK}"
+fi
+unset _NGINX_NETWORK
+_ft_log "msg='nginx container guard passed' container=nginx network=$NETWORK"
+
+# Ensure nginx live and backup directories exist (deploy user owns them)
+mkdir -p "$NGINX_LIVE_DIR" "$NGINX_BACKUP_DIR"
+
 # ---------------------------------------------------------------------------
 # PREFLIGHT CHECK  (policy=warn: missing preflight logs a warning, does not abort)
 # ---------------------------------------------------------------------------
@@ -450,14 +492,14 @@ ACTIVE=$(printf '%s' "$ACTIVE" | tr -d '[:space:]')
 _ft_validate_slot "$ACTIVE" || exit 1
 
 if [ "$ACTIVE" = "blue" ]; then
-    ACTIVE_NAME=$BLUE_NAME;   ACTIVE_PORT=$BLUE_PORT
-    INACTIVE="green"; INACTIVE_NAME=$GREEN_NAME; INACTIVE_PORT=$GREEN_PORT
+    ACTIVE_NAME=$BLUE_NAME
+    INACTIVE="green"; INACTIVE_NAME=$GREEN_NAME
 else
-    ACTIVE_NAME=$GREEN_NAME;  ACTIVE_PORT=$GREEN_PORT
-    INACTIVE="blue";  INACTIVE_NAME=$BLUE_NAME;  INACTIVE_PORT=$BLUE_PORT
+    ACTIVE_NAME=$GREEN_NAME
+    INACTIVE="blue";  INACTIVE_NAME=$BLUE_NAME
 fi
 
-_ft_log "msg='slot resolved' active=$ACTIVE active_port=$ACTIVE_PORT inactive=$INACTIVE inactive_port=$INACTIVE_PORT"
+_ft_log "msg='slot resolved' active=$ACTIVE active_name=$ACTIVE_NAME inactive=$INACTIVE inactive_name=$INACTIVE_NAME"
 
 # ---------------------------------------------------------------------------
 # INITIAL DEPLOYMENT DETECTION -- no containers exist yet
@@ -465,6 +507,21 @@ _ft_log "msg='slot resolved' active=$ACTIVE active_port=$ACTIVE_PORT inactive=$I
 if ! docker ps -a --format '{{.Names}}' | grep -Eq '^api-(blue|green)$'; then
     _ft_log "msg='initial deployment detected — no existing containers'"
     INITIAL_DEPLOY=true
+fi
+
+# ---------------------------------------------------------------------------
+# ACTIVE CONTAINER EXISTENCE GUARD
+# Protect against race: active slot file says "blue" but container doesn't exist.
+# This catches crash/OOM scenarios before any deploy logic runs.
+# ---------------------------------------------------------------------------
+if docker ps -a --format '{{.Names}}' | grep -q "^${ACTIVE_NAME}$"; then
+    if ! docker inspect "$ACTIVE_NAME" >/dev/null 2>&1; then
+        _ft_log "level=ERROR msg='active container listed by docker ps but inspect failed -- possible race' container=$ACTIVE_NAME"
+        _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=active_container_inspect_race container=$ACTIVE_NAME"
+    fi
+    _ft_log "msg='active container existence guard passed' container=$ACTIVE_NAME"
+else
+    _ft_log "level=WARN msg='active container not running (first deploy or crash recovery)' container=$ACTIVE_NAME"
 fi
 
 # ---------------------------------------------------------------------------
@@ -477,7 +534,7 @@ if [ "$_RUNNING_IMAGE" = "$IMAGE" ]; then
         # SHA matches -- only skip if the active container is also healthy.
         # If it is unhealthy, proceed so the deploy restarts it cleanly.
         _IDEMPOTENT_HEALTH=$(timeout 4 curl -s --max-time 3 \
-            "http://127.0.0.1:$ACTIVE_PORT/ready" 2>/dev/null || echo "")
+            "http://$ACTIVE_NAME:$APP_PORT/ready" 2>/dev/null || echo "")
         if echo "$_IDEMPOTENT_HEALTH" | grep -q '"status":"ready"' 2>/dev/null; then
             _ft_log "msg='target SHA already running and healthy -- nothing to do' container=$ACTIVE_NAME image=$IMAGE"
             _ft_exit 0 "DEPLOY_SUCCESS" "reason=idempotent_noop sha=$IMAGE_SHA container=$ACTIVE_NAME"
@@ -493,7 +550,7 @@ if [ "$_RUNNING_IMAGE" = "$IMAGE" ]; then
 # ---------------------------------------------------------------------------
 # [3/7] START INACTIVE CONTAINER
 # ---------------------------------------------------------------------------
-_ft_state "START_INACTIVE" "msg='starting inactive container' name=$INACTIVE_NAME port=$INACTIVE_PORT"
+_ft_state "START_INACTIVE" "msg='starting inactive container' name=$INACTIVE_NAME"
 
 if docker ps -a --format '{{.Names}}' | grep -Eq "^${INACTIVE_NAME}$"; then
     _ft_log "msg='removing stale container' name=$INACTIVE_NAME"
@@ -504,7 +561,6 @@ fi
 timeout 60 docker run -d \
   --name "$INACTIVE_NAME" \
   --network "$NETWORK" \
-  -p "127.0.0.1:$INACTIVE_PORT:$APP_PORT" \
   --restart unless-stopped \
   --label "api.sha=$IMAGE_SHA" \
   --label "api.slot=$INACTIVE" \
@@ -512,7 +568,7 @@ timeout 60 docker run -d \
   --env-file "$ENV_FILE" \
   "$IMAGE"
 
-_ft_log "msg='container started' name=$INACTIVE_NAME port=$INACTIVE_PORT"
+_ft_log "msg='container started' name=$INACTIVE_NAME"
 
 # IMAGE IMMUTABILITY CHECK -- confirm running container image matches target SHA.
 _ACTUAL_IMAGE=$(docker inspect --format '{{.Config.Image}}' "$INACTIVE_NAME" 2>/dev/null || echo "")
@@ -541,30 +597,29 @@ _CONN_ATTEMPTS=0
 _CONN_OK=false
 while [ "$_CONN_ATTEMPTS" -lt 5 ]; do
     _CONN_ATTEMPTS=$((_CONN_ATTEMPTS + 1))
-    if timeout 3 curl -s -o /dev/null -w '%{http_code}' \
-            "http://127.0.0.1:$INACTIVE_PORT/health" 2>/dev/null | grep -qE '^[0-9]+$'; then
+    if timeout 3 curl -sf "http://$INACTIVE_NAME:$APP_PORT/health" >/dev/null 2>&1; then
         _CONN_OK=true
         break
     fi
-    _ft_log "msg='connectivity pre-check waiting' attempt=$_CONN_ATTEMPTS/5 port=$INACTIVE_PORT"
-    sleep 2
+    _ft_log "msg='connectivity pre-check waiting' attempt=$_CONN_ATTEMPTS/5 container=$INACTIVE_NAME"
+    sleep $((RANDOM % 3 + 1))
 done
 if [ "$_CONN_OK" = "false" ]; then
-    _ft_log "level=ERROR msg='container port not reachable after connectivity pre-check' port=$INACTIVE_PORT"
+    _ft_log "level=ERROR msg='container not reachable after connectivity pre-check' container=$INACTIVE_NAME"
     docker logs "$INACTIVE_NAME" --tail 100 >&2 || true
     docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
     docker rm "$INACTIVE_NAME" || true
     _ft_log "msg='active container still serving -- deploy failed non-destructively' container=$ACTIVE_NAME"
-    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=container_port_not_reachable port=$INACTIVE_PORT"
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=container_not_reachable container=$INACTIVE_NAME"
 fi
 unset _CONN_ATTEMPTS _CONN_OK
-_ft_log "msg='connectivity pre-check passed' port=$INACTIVE_PORT"
+_ft_log "msg='connectivity pre-check passed' container=$INACTIVE_NAME"
 
 ATTEMPT=0
 until true; do
     ATTEMPT=$((ATTEMPT + 1))
     STATUS=$(timeout 5 curl --max-time 4 -s -o /dev/null -w "%{http_code}" \
-        "http://127.0.0.1:$INACTIVE_PORT${HEALTH_ENDPOINT}" || echo "000")
+        "http://$INACTIVE_NAME:$APP_PORT${HEALTH_ENDPOINT}" || echo "000")
 
     if [ "$STATUS" = "200" ]; then
         _ft_log "msg='internal health check passed' endpoint=$HEALTH_ENDPOINT attempts=$ATTEMPT"
@@ -581,7 +636,7 @@ until true; do
     fi
 
     if [ "$ATTEMPT" -ge "$MAX_HEALTH_ATTEMPTS" ]; then
-        _ft_log "level=ERROR msg='internal health check timed out' attempts=$ATTEMPT status=$STATUS endpoint=http://127.0.0.1:$INACTIVE_PORT${HEALTH_ENDPOINT}"
+        _ft_log "level=ERROR msg='internal health check timed out' attempts=$ATTEMPT status=$STATUS endpoint=http://$INACTIVE_NAME:$APP_PORT${HEALTH_ENDPOINT}"
         docker logs "$INACTIVE_NAME" --tail 100 >&2 || true
         docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
         docker rm "$INACTIVE_NAME" || true
@@ -597,44 +652,58 @@ done
 # ---------------------------------------------------------------------------
 # [5/7] SWITCH NGINX UPSTREAM
 # ---------------------------------------------------------------------------
-_ft_state "SWITCH_NGINX" "msg='switching nginx upstream' port=$INACTIVE_PORT"
+_ft_state "SWITCH_NGINX" "msg='switching nginx upstream' container=$INACTIVE_NAME"
+
+# Deterministic stabilization window: give the new container a moment before
+# switching nginx (complements the jitter already in the health check loop).
+sleep 2
 
 # Backup goes to /etc/nginx/ (NOT sites-enabled/) so nginx does not parse it
 # during validation and trigger a duplicate-upstream error.
 NGINX_BACKUP="/etc/nginx/api.conf.bak.$(date +%s)"
 NGINX_TMP="$(mktemp /tmp/api-nginx.XXXXXX.conf)"
 
+# PRE-RELOAD GATE: confirm container is still ready before pointing nginx at it
+if ! timeout 4 curl -sf "http://$INACTIVE_NAME:$APP_PORT/ready" >/dev/null 2>&1; then
+    _ft_log "level=ERROR msg='pre-reload gate failed: container not ready, aborting nginx reload' container=$INACTIVE_NAME"
+    docker logs "$INACTIVE_NAME" --tail 50 >&2 || true
+    docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
+    docker rm "$INACTIVE_NAME" || true
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=pre_reload_gate_failed container=$INACTIVE_NAME"
+fi
+_ft_log "msg='pre-reload gate passed' container=$INACTIVE_NAME"
+
 sed \
-    -e "s|__BACKEND_PORT__|$INACTIVE_PORT|g" \
+    -e "s|__ACTIVE_CONTAINER__|$INACTIVE_NAME|g" \
     -e "s|__API_HOSTNAME__|$API_HOSTNAME|g" \
     "$NGINX_TEMPLATE" > "$NGINX_TMP"
 
-sudo cp "$NGINX_CONF" "$NGINX_BACKUP"
-sudo cp "$NGINX_TMP" "$NGINX_CONF"
+cp "$NGINX_CONF" "$NGINX_BACKUP"
+cp "$NGINX_TMP" "$NGINX_CONF"
 rm -f "$NGINX_TMP"
-# Remove stale backups accidentally left in sites-enabled/ by old deploy runs.
-sudo rm -f /etc/nginx/sites-enabled/api.conf.bak.*
+# Prune old backups (keep last 5) to avoid unbounded growth
+ls -1t "$NGINX_BACKUP_DIR"/api.conf.bak.* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
 
-if ! sudo nginx -t 2>&1; then
+if ! docker exec nginx nginx -t 2>&1; then
     _ft_log "level=ERROR msg='nginx config test failed -- restoring backup'"
-    sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
+    cp "$NGINX_BACKUP" "$NGINX_CONF"
     _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_config_test_failed"
 fi
 
-sudo systemctl reload nginx
-_ft_log "msg='nginx reloaded' upstream=127.0.0.1:$INACTIVE_PORT"
+docker exec nginx nginx -s reload
+_ft_log "msg='nginx reloaded' upstream=$INACTIVE_NAME:$APP_PORT"
 
-# Upstream sanity check -- confirm nginx config actually points at the new port.
+# Upstream sanity check -- confirm nginx config actually points at the new container.
 # Catches template substitution failures before traffic is affected.
-_RELOAD_PORT=$(sudo grep -oE '127\.0\.0\.1:[0-9]+' "$NGINX_CONF" 2>/dev/null | head -1 | cut -d: -f2 || echo "")
-if [ "$_RELOAD_PORT" != "$INACTIVE_PORT" ]; then
-    _ft_log "level=ERROR msg='nginx upstream sanity check failed after reload' expected=$INACTIVE_PORT actual=${_RELOAD_PORT:-unreadable}"
-    sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
-    sudo nginx -t 2>&1 && sudo systemctl reload nginx || true
-    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_upstream_mismatch expected=$INACTIVE_PORT actual=${_RELOAD_PORT:-unreadable}"
+_RELOAD_CONTAINER=$(grep -oE 'server (api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
+if [ "$_RELOAD_CONTAINER" != "$INACTIVE_NAME" ]; then
+    _ft_log "level=ERROR msg='nginx upstream sanity check failed after reload' expected=$INACTIVE_NAME actual=${_RELOAD_CONTAINER:-unreadable}"
+    cp "$NGINX_BACKUP" "$NGINX_CONF"
+    docker exec nginx nginx -t 2>&1 && docker exec nginx nginx -s reload || true
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=nginx_upstream_mismatch expected=$INACTIVE_NAME actual=${_RELOAD_CONTAINER:-unreadable}"
 fi
-unset _RELOAD_PORT
-_ft_log "msg='nginx upstream sanity check passed' port=$INACTIVE_PORT"
+unset _RELOAD_CONTAINER
+_ft_log "msg='nginx upstream sanity check passed' container=$INACTIVE_NAME"
 
 # Write the slot file AFTER nginx reload so it always reflects what nginx
 # is currently serving. If the public health check then fails and we roll
@@ -644,12 +713,32 @@ _ft_write_slot "$INACTIVE"
 # Small settle window to stabilize TLS/keep-alive/edge cases
 sleep 2
 
+# POST-SWITCH ROUTING VERIFICATION
+# Tests: nginx HTTPS stack is responding + can reach the new container.
+# Uses 127.0.0.1 to avoid Cloudflare IP allowlist (same pattern as public check).
+_ft_log "msg='post-switch nginx routing verification'"
+if ! _ft_retry_curl "https://127.0.0.1/health" 5 --insecure; then
+    _ft_log "level=ERROR msg='post-switch nginx routing verification failed -- nginx cannot reach new container'"
+    _ft_snapshot
+    cp "$NGINX_BACKUP" "$NGINX_CONF"
+    if docker exec nginx nginx -t 2>&1 && docker exec nginx nginx -s reload; then
+        _ft_log "msg='nginx restored (post-switch routing failure)'"
+    else
+        _ft_log "level=ERROR msg='nginx restore failed during post-switch rollback'"
+    fi
+    _ft_write_slot "$ACTIVE"
+    docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
+    docker rm "$INACTIVE_NAME" || true
+    _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=post_switch_routing_failed container=$INACTIVE_NAME"
+fi
+_ft_log "msg='post-switch routing verification passed'"
+
 # ---------------------------------------------------------------------------
 # [6/7] PUBLIC HEALTH CHECK (end-to-end nginx routing)
 #   Validates:
 #   1. HTTP 200              -- nginx routing, TLS, Host header matching
 #   2. Body "status":"ready" -- backend /ready endpoint, external services
-#   3. Port alignment        -- live nginx config points at $INACTIVE_PORT
+#   3. Container alignment   -- live nginx config points at $INACTIVE_NAME
 #
 #   NOTE: Uses localhost (127.0.0.1) + Host header to validate nginx routing
 #   while avoiding Cloudflare IP allowlist block (see _ft_check_external_ready).
@@ -680,10 +769,10 @@ for _attempt in 1 2 3 4 5; do
     sleep 5
 done
 
-# Port alignment check -- live nginx config MUST point at the new slot's port.
-_NGINX_PORT=$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" 2>/dev/null | head -1 || echo "")
-if [ -n "$_NGINX_PORT" ] && [ "$_NGINX_PORT" != "$INACTIVE_PORT" ]; then
-    _ft_log "level=ERROR msg='nginx port mismatch -- slot switch did not take effect' expected=$INACTIVE_PORT actual=$_NGINX_PORT"
+# Container alignment check -- live nginx config MUST point at the new container.
+_NGINX_CONTAINER=$(grep -oE 'server (api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
+if [ -n "$_NGINX_CONTAINER" ] && [ "$_NGINX_CONTAINER" != "$INACTIVE_NAME" ]; then
+    _ft_log "level=ERROR msg='nginx container mismatch -- slot switch did not take effect' expected=$INACTIVE_NAME actual=$_NGINX_CONTAINER"
     _PUB_PASSED=false
 fi
 
@@ -692,8 +781,8 @@ if [ "$_PUB_PASSED" != "true" ]; then
     _ft_snapshot
 
     _ft_log "msg='restoring previous nginx config'"
-    sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
-    if sudo nginx -t 2>&1 && sudo systemctl reload nginx; then
+    cp "$NGINX_BACKUP" "$NGINX_CONF"
+    if docker exec nginx nginx -t 2>&1 && docker exec nginx nginx -s reload; then
         _ft_log "msg='nginx restored to previous config'"
     else
         _ft_log "level=ERROR msg='nginx restore failed -- check manually'"
@@ -704,11 +793,11 @@ if [ "$_PUB_PASSED" != "true" ]; then
     docker stop --time 10 "$INACTIVE_NAME" 2>/dev/null || true
     docker rm "$INACTIVE_NAME" || true
 
-    unset _PUB_PASSED _attempt _PUB_STATUS _PUB_BODY _NGINX_PORT
+    unset _PUB_PASSED _attempt _PUB_STATUS _PUB_BODY _NGINX_CONTAINER
 
     if docker ps --format '{{.Names}}' | grep -q "^${ACTIVE_NAME}$"; then
         _ACTIVE_HEALTH=$(timeout 4 curl -s --max-time 3 \
-            "http://127.0.0.1:$ACTIVE_PORT/ready" 2>/dev/null || echo "")
+            "http://$ACTIVE_NAME:$APP_PORT/ready" 2>/dev/null || echo "")
         if echo "$_ACTIVE_HEALTH" | grep -q '"status":"ready"' 2>/dev/null; then
             _ft_log "msg='deploy failed but active container healthy -- skipping rollback' container=$ACTIVE_NAME"
             unset _ACTIVE_HEALTH
@@ -734,8 +823,8 @@ if [ "$_PUB_PASSED" != "true" ]; then
     fi
 fi
 
-unset _PUB_PASSED _attempt _PUB_STATUS _PUB_BODY _NGINX_PORT
-_ft_log "msg='public health check passed' port=$INACTIVE_PORT host=$API_HOSTNAME endpoint=/ready"
+unset _PUB_PASSED _attempt _PUB_STATUS _PUB_BODY _NGINX_CONTAINER
+_ft_log "msg='public health check passed' container=$INACTIVE_NAME host=$API_HOSTNAME endpoint=/ready"
 
 # ---------------------------------------------------------------------------
 # [6.5/7] STABILITY CHECK -- re-verify external endpoint after a settle window
@@ -756,8 +845,8 @@ if [ "$_STABLE" = "false" ]; then
 
     # Restore nginx + slot
     _ft_log "msg='restoring previous nginx config (stability failure)'"
-    sudo cp "$NGINX_BACKUP" "$NGINX_CONF"
-    if sudo nginx -t 2>&1 && sudo systemctl reload nginx; then
+    cp "$NGINX_BACKUP" "$NGINX_CONF"
+    if docker exec nginx nginx -t 2>&1 && docker exec nginx nginx -s reload; then
         _ft_log "msg='nginx restored (stability failure)'"
     else
         _ft_log "level=ERROR msg='nginx restore failed during stability rollback -- check manually'"
@@ -768,7 +857,7 @@ if [ "$_STABLE" = "false" ]; then
 
     if docker ps --format '{{.Names}}' | grep -q "^${ACTIVE_NAME}$"; then
         _ACTIVE_HEALTH=$(timeout 4 curl -s --max-time 3 \
-            "http://127.0.0.1:$ACTIVE_PORT/ready" 2>/dev/null || echo "")
+            "http://$ACTIVE_NAME:$APP_PORT/ready" 2>/dev/null || echo "")
         if echo "$_ACTIVE_HEALTH" | grep -q '"status":"ready"' 2>/dev/null; then
             _ft_log "msg='active container healthy after stability failure -- skipping rollback' container=$ACTIVE_NAME"
             unset _ACTIVE_HEALTH
@@ -815,7 +904,7 @@ else
     _ft_log "msg='cleanup skipped (first deploy scenario or container already removed)'"
 fi
 
-_ft_state "SUCCESS" "msg='deployment complete' container=$INACTIVE_NAME sha=$IMAGE_SHA slot=$INACTIVE port=$INACTIVE_PORT"
+_ft_state "SUCCESS" "msg='deployment complete' container=$INACTIVE_NAME sha=$IMAGE_SHA slot=$INACTIVE"
 
 # ---------------------------------------------------------------------------
 # FINAL TRUTH CHECK -- verify state matches deployment intent
@@ -838,34 +927,34 @@ else
     _FT_TRUTH_CHECK_PASSED=false
 fi
 
-# (2) Verify nginx upstream port matches target
-_NGINX_PORT=$(grep -oP 'server 127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" 2>/dev/null | head -1 || echo "")
-if [ -n "$_NGINX_PORT" ]; then
-    if [ "$_NGINX_PORT" != "$INACTIVE_PORT" ]; then
-        _ft_log "level=ERROR msg='truth check failed: nginx port mismatch' expected=$INACTIVE_PORT actual=$_NGINX_PORT"
+# (2) Verify nginx upstream container matches target
+_NGINX_CONTAINER=$(grep -oE 'server (api-blue|api-green):3000' "$NGINX_CONF" 2>/dev/null | grep -oE 'api-blue|api-green' | head -1 || echo "")
+if [ -n "$_NGINX_CONTAINER" ]; then
+    if [ "$_NGINX_CONTAINER" != "$INACTIVE_NAME" ]; then
+        _ft_log "level=ERROR msg='truth check failed: nginx container mismatch' expected=$INACTIVE_NAME actual=$_NGINX_CONTAINER"
         _FT_TRUTH_CHECK_PASSED=false
     else
-        _ft_log "msg='truth check: nginx port correct' port=$_NGINX_PORT"
+        _ft_log "msg='truth check: nginx upstream correct' container=$_NGINX_CONTAINER"
     fi
 else
-    _ft_log "level=WARN msg='truth check: could not read nginx port'"
+    _ft_log "level=WARN msg='truth check: could not read nginx upstream'"
 fi
 
 # (3) Compare internal vs external endpoint health
-# Internal: direct container endpoint  (127.0.0.1:$INACTIVE_PORT/ready)
+# Internal: direct container endpoint  (http://$INACTIVE_NAME:$APP_PORT/ready)
 # External: production DNS/Cloudflare   (https://$API_HOSTNAME/ready)
 # Mismatch indicates routing, TLS, or proxy issues
 if command -v curl >/dev/null 2>&1; then
     sleep 2
 
-    # Check internal endpoint
-    _INT_READY=$(curl -s -m 5 "http://127.0.0.1:$INACTIVE_PORT/ready" 2>/dev/null || echo "")
+    # Check internal endpoint (container DNS)
+    _INT_READY=$(curl -s -m 5 "http://$INACTIVE_NAME:$APP_PORT/ready" 2>/dev/null || echo "")
     _INT_READY_OK=false
     if echo "$_INT_READY" | grep -q '"status":"ready"' 2>/dev/null; then
         _INT_READY_OK=true
-        _ft_log "msg='truth check: internal endpoint ready' url=http://127.0.0.1:$INACTIVE_PORT/ready"
+        _ft_log "msg='truth check: internal endpoint ready' url=http://$INACTIVE_NAME:$APP_PORT/ready"
     else
-        _ft_log "level=WARN msg='truth check: internal endpoint not ready' url=http://127.0.0.1:$INACTIVE_PORT/ready response=${_INT_READY:0:100}"
+        _ft_log "level=WARN msg='truth check: internal endpoint not ready' url=http://$INACTIVE_NAME:$APP_PORT/ready response=${_INT_READY:0:100}"
     fi
 
     # Check external endpoint (DNS/Cloudflare/TLS) with latency measurement (SLO monitoring)
@@ -921,9 +1010,9 @@ if [ "$_FT_TRUTH_CHECK_PASSED" != "true" ]; then
 fi
 
 # Persist last-known-good snapshot for fast recovery triage (atomic write)
-_ft_log "msg='recording last-known-good state' slot=$INACTIVE port=$INACTIVE_PORT"
+_ft_log "msg='recording last-known-good state' slot=$INACTIVE container=$INACTIVE_NAME"
 _SNAP_TMP=$(mktemp "${SNAP_DIR}/last-good.XXXXXX")
-printf 'slot=%s port=%s ts=%s\n' "$INACTIVE" "$INACTIVE_PORT" "$(date -Iseconds)" > "$_SNAP_TMP"
+printf 'slot=%s container=%s ts=%s\n' "$INACTIVE" "$INACTIVE_NAME" "$(date -Iseconds)" > "$_SNAP_TMP"
 mv "$_SNAP_TMP" "$LAST_GOOD_FILE"
 _ft_log "msg='last-known-good snapshot recorded (atomic)' file=$LAST_GOOD_FILE"
 
@@ -963,3 +1052,5 @@ else
     echo "$MONITORING_HASH" > "$MONITORING_HASH_FILE"
     _ft_log "msg='monitoring stack restarted'"
 fi
+
+_ft_exit 0 "DEPLOY_SUCCESS" "sha=$IMAGE_SHA container=$INACTIVE_NAME slot=$INACTIVE"
