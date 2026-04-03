@@ -32,7 +32,8 @@ REPO_DIR="$DEPLOY_ROOT"
 LEGACY_REPO_DIR="${DEPLOY_HOME}/FieldTrack-2.0"
 AUTO_CLEAN_LEGACY_REPO="${AUTO_CLEAN_LEGACY_REPO:-false}"
 NETWORK="api_network"
-NGINX_SITE_LINK="/etc/nginx/conf.d/api.conf"
+NGINX_LIVE_DIR="$DEPLOY_ROOT/infra/nginx/live"
+NGINX_SITE_LINK="$NGINX_LIVE_DIR/api.conf"
 
 # ── Colour output ─────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -46,8 +47,10 @@ err()  { echo -e "${RED}[✗]${NC} $1"; exit 1; }
 
 render_nginx_ssl_config() {
     local target_file="$1"
+    mkdir -p "$(dirname "$target_file")"
     cp "$REPO_DIR/infra/nginx/api.conf" "$target_file"
     sed -i "s|__API_HOSTNAME__|$DOMAIN|g" "$target_file"
+    sed -i "s|__ACTIVE_CONTAINER__|api-blue|g" "$target_file"  # bootstrap slot
 }
 
 echo ""
@@ -332,8 +335,9 @@ log "SSL certificate provisioned for $DOMAIN"
 # Stage 2: install SSL Nginx config after certs exist
 log "Phase 11b: Activating SSL Nginx config..."
 render_nginx_ssl_config "$NGINX_SITE_LINK"
+# Validate config with system nginx while it's still running
 nginx -t && systemctl reload nginx
-log "SSL Nginx config activated at $NGINX_SITE_LINK"
+log "SSL Nginx config rendered at $NGINX_SITE_LINK"
 
 # ============================================================================
 # PHASE 12: GHCR Login
@@ -385,14 +389,22 @@ else
 fi
 
 # ============================================================================
-# PHASE 14: Start Monitoring Stack
+# PHASE 14: Start Monitoring Stack (including Docker nginx)
 # ============================================================================
 log "Phase 14: Starting monitoring stack..."
+
+# Stop system nginx — Docker nginx in the monitoring stack takes over ports 80/443.
+# System nginx is no longer needed after cert acquisition; Docker nginx handles
+# ACME challenge renewal via /var/www/certbot mount.
+log "Phase 14a: Stopping system nginx (Docker nginx takes over)..."
+systemctl stop nginx || true
+systemctl disable nginx || true
+log "System nginx stopped and disabled."
 
 cd "$REPO_DIR/infra"
 sudo -u "$DEPLOY_USER" docker compose --env-file .env.monitoring -f docker-compose.monitoring.yml up -d
 
-log "Monitoring stack started (Prometheus, Grafana, Node Exporter)"
+log "Monitoring stack started (Prometheus, Grafana, Node Exporter, Nginx)"
 
 # ============================================================================
 # PHASE 15: First Deployment
@@ -411,12 +423,11 @@ else
     sudo -u "$DEPLOY_USER" docker run -d \
         --name api-blue \
         --network "$NETWORK" \
-        -p "127.0.0.1:3001:3000" \
         --restart unless-stopped \
         --env-file "$ENV_FILE" \
         ghcr.io/fieldtrack-tech/api:latest
 
-    log "Backend container (api-blue) started on 127.0.0.1:3001."
+    log "Backend container (api-blue) started (network: $NETWORK)."
 fi
 
 # ============================================================================
@@ -443,7 +454,7 @@ echo "============================================="
 echo ""
 echo "  Next steps:"
 echo "    1. Edit $ENV_FILE with production values"
-echo "    2. Verify: curl http://127.0.0.1:3001/health"
+echo "    2. Verify: curl https://$DOMAIN/health"
 echo "    3. Verify: curl https://$DOMAIN/health"
 echo "    4. Edit $MONITORING_ENV_FILE (set GRAFANA_ADMIN_PASSWORD and METRICS_SCRAPE_TOKEN)"
 echo "    5. Grafana: https://$DOMAIN/monitor (admin / configured password)"
