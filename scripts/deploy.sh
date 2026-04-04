@@ -188,11 +188,13 @@ _ft_snapshot() {
 }
 
 # ---------------------------------------------------------------------------
-# GITHUB ACTIONS SUMMARY
+# GITHUB ACTIONS SUMMARY (optional; unset outside GitHub Actions — must not trip set -u)
 # ---------------------------------------------------------------------------
 _ft_github_summary() {
     local status="$1" container="${2:-unknown}" image="${3:-unknown}" reason="${4:-}"
-    [ -z "$GITHUB_STEP_SUMMARY" ] && return 0
+    if [ -z "${GITHUB_STEP_SUMMARY:-}" ]; then
+        return 0
+    fi
     {
         echo "### 🚀 Deployment Summary"
         echo "| Field | Value |"
