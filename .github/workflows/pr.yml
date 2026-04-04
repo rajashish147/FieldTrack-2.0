@@ -123,7 +123,7 @@ jobs:
 
           if grep -rE '\bfieldtrack_network\b' src/ scripts/ \
                --include='*.ts' --include='*.sh' \
-               2>/dev/null | grep -Ev '^\s*#'; then
+               2>/dev/null | grep -Ev '^[^:]+:\s*(#|//)'; then
             echo "::error::Forbidden network name 'fieldtrack_network' — canonical name is 'api_network'"
             FAIL=1
           fi

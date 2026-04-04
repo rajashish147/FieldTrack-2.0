@@ -280,7 +280,7 @@ jobs:
           # Guard 1: no stale network name (fieldtrack_network is not the canonical name)
           if grep -rE '\bfieldtrack_network\b' src/ scripts/ \
                --include='*.ts' --include='*.sh' \
-               2>/dev/null | grep -Ev '^\s*#'; then
+               2>/dev/null | grep -Ev '^[^:]+:\s*(#|//)'; then
             echo "::error::Forbidden network name 'fieldtrack_network' found — canonical name is 'api_network'"
             FAIL=1
           fi
@@ -898,7 +898,7 @@ jobs:
           # Scope: scripts/ and src/ only (not workflows where guard steps live).
           if grep -rE "\./infra/|\.\.\./infra/" scripts/ src/ \
                --binary-files=without-match --exclude-dir=node_modules 2>/dev/null \
-               | grep -Ev '^\s*#'; then
+               | grep -Ev '^[^:]+:\s*(#|//)'; then
             echo "::error::Local repo-relative infra coupling (./infra/ or ../infra/) detected in scripts/ or src/"
             exit 1
           fi
@@ -915,7 +915,8 @@ jobs:
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
             [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
-            API_BASE_URL=$(grep -E '^API_BASE_URL=' .env | head -1 | cut -d'=' -f2-)
+            API_BASE_URL=$(grep -E '^API_BASE_URL=' .env 2>/dev/null | head -1 | cut -d'=' -f2- || true)
+            [ -n "$API_BASE_URL" ] || { echo "::error::API_BASE_URL missing or empty in .env"; exit 1; }
             API_HOSTNAME=$(echo "$API_BASE_URL" | sed -E 's|^https?://||' | cut -d'/' -f1)
             for i in $(seq 1 30); do
               # Phase 1: in-network (source of truth)
@@ -951,7 +952,8 @@ jobs:
             export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
             [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
-            API_BASE_URL=$(grep -E '^API_BASE_URL=' .env | head -1 | cut -d'=' -f2-)
+            API_BASE_URL=$(grep -E '^API_BASE_URL=' .env 2>/dev/null | head -1 | cut -d'=' -f2- || true)
+            [ -n "$API_BASE_URL" ] || { echo "::error::API_BASE_URL missing or empty in .env"; exit 1; }
             API_HOSTNAME=$(echo "$API_BASE_URL" | sed -E 's|^https?://||' | cut -d'/' -f1)
             for i in $(seq 1 10); do
               # Phase 1: in-network (source of truth)
