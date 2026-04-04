@@ -29,6 +29,10 @@
 #   - NEVER depends on: Redis, Supabase, BullMQ, monitoring stack
 #   - No /ready usage anywhere in this script
 #   - All nginx reloads flow through switch_nginx() — exactly once per deploy
+#
+# Deploy state (slot, lock, last-good):
+#   - FIELDTRACK_STATE_DIR or /var/lib/fieldtrack when writable (sudo chown if needed)
+#   - Otherwise $DEPLOY_ROOT/.fieldtrack; existing /var/lib/fieldtrack/* is migrated once
 # =============================================================================
 set -euo pipefail
 if [ "${DEBUG:-false}" = "true" ]; then set -x; fi
@@ -302,14 +306,66 @@ run() {
 
 # ---------------------------------------------------------------------------
 # SLOT DIRECTORY AND FILE MANAGEMENT
+#
+# Primary state dir: FIELDTRACK_STATE_DIR or /var/lib/fieldtrack (persistent).
+# If that path exists but is root-owned (common after manual/bootstrap mkdir),
+# we sudo chown it for the deploy user. If we still cannot write, fall back to
+# $DEPLOY_ROOT/.fieldtrack (always user-writable) and migrate slot files once.
 # ---------------------------------------------------------------------------
+_ft_make_state_dir_writable() {
+    local d="$1"
+    if [ ! -d "$d" ]; then
+        sudo mkdir -p "$d" 2>/dev/null || return 1
+    fi
+    if [ -w "$d" ]; then
+        return 0
+    fi
+    sudo chown "$(id -un):$(id -gn)" "$d" 2>/dev/null || return 1
+    sudo chmod u+rwx "$d" 2>/dev/null || true
+    [ -w "$d" ]
+}
+
+_ft_migrate_state_from_var_lib_if_needed() {
+    local legacy="/var/lib/fieldtrack"
+    [ "$SLOT_DIR" = "$legacy" ] && return 0
+    [ -f "$ACTIVE_SLOT_FILE" ] && return 0
+    [ ! -r "$legacy/active-slot" ] && return 0
+    _ft_log "msg='migrating active-slot from legacy path' from=$legacy/active-slot"
+    cp -a "$legacy/active-slot" "$ACTIVE_SLOT_FILE" 2>/dev/null || true
+    if [ -f "$legacy/active-slot.backup" ] && [ ! -f "$SLOT_BACKUP_FILE" ]; then
+        cp -a "$legacy/active-slot.backup" "$SLOT_BACKUP_FILE" 2>/dev/null || true
+    fi
+    if [ -f "$legacy/last-good" ] && [ ! -f "$LAST_GOOD_FILE" ]; then
+        cp -a "$legacy/last-good" "$LAST_GOOD_FILE" 2>/dev/null || true
+    fi
+}
+
+_ft_init_fieldtrack_state() {
+    local preferred="${FIELDTRACK_STATE_DIR:-/var/lib/fieldtrack}"
+    SLOT_DIR="$preferred"
+    if ! _ft_make_state_dir_writable "$SLOT_DIR"; then
+        SLOT_DIR="$DEPLOY_ROOT/.fieldtrack"
+        mkdir -p "$SLOT_DIR"
+        _ft_log "msg='preferred state dir not writable; using DEPLOY_ROOT fallback' preferred=$preferred fallback=$SLOT_DIR user=$(id -un)"
+    fi
+    ACTIVE_SLOT_FILE="$SLOT_DIR/active-slot"
+    SLOT_BACKUP_FILE="$SLOT_DIR/active-slot.backup"
+    LOCK_FILE="$SLOT_DIR/deploy.lock"
+    SNAP_DIR="$SLOT_DIR"
+    LAST_GOOD_FILE="$SNAP_DIR/last-good"
+    _ft_migrate_state_from_var_lib_if_needed
+}
+
 _ft_ensure_slot_dir() {
     if [ ! -d "$SLOT_DIR" ]; then
-        _ft_log "msg='slot dir missing, creating' path=$SLOT_DIR"
-        sudo mkdir -p "$SLOT_DIR"
-        sudo chown "$(id -un):$(id -gn)" "$SLOT_DIR"
-        sudo chmod 750 "$SLOT_DIR"
+        mkdir -p "$SLOT_DIR" 2>/dev/null || sudo mkdir -p "$SLOT_DIR"
+        sudo chown "$(id -un):$(id -gn)" "$SLOT_DIR" 2>/dev/null || true
     fi
+    if [ ! -w "$SLOT_DIR" ]; then
+        _ft_log "level=ERROR msg='slot directory not writable' path=$SLOT_DIR user=$(id -un)"
+        return 1
+    fi
+    return 0
 }
 
 _ft_ensure_slot_backup_dir() {
@@ -331,7 +387,7 @@ _ft_validate_slot() {
 _ft_write_slot() {
     local slot="$1"
     _ft_validate_slot "$slot" || return 1
-    _ft_ensure_slot_dir
+    _ft_ensure_slot_dir || _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=slot_dir_not_writable"
     local tmp
     tmp=$(mktemp "${SLOT_DIR}/active-slot.XXXXXX")
     printf '%s\n' "$slot" > "$tmp"
@@ -350,7 +406,7 @@ _ft_write_slot() {
 # DEPLOYMENT LOCK
 # ---------------------------------------------------------------------------
 _ft_acquire_lock() {
-    _ft_ensure_slot_dir
+    _ft_ensure_slot_dir || _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=slot_dir_not_writable"
     _ft_log "msg='acquiring deployment lock' pid=$$ file=$LOCK_FILE"
     exec 200>"$LOCK_FILE"
     if ! flock -n 200; then
@@ -469,7 +525,7 @@ pull_image() {
 # ---------------------------------------------------------------------------
 resolve_slot() {
     _ft_state "RESOLVE_SLOT" "msg='determining active slot'"
-    _ft_ensure_slot_dir
+    _ft_ensure_slot_dir || _ft_exit 1 "DEPLOY_FAILED_SAFE" "reason=slot_dir_not_writable"
 
     local recovered_slot=""
 
@@ -1213,15 +1269,15 @@ DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
 REPO_DIR="$DEPLOY_ROOT"
 INFRA_ROOT="${INFRA_ROOT:-/opt/infra}"
 
+_ft_init_fieldtrack_state
+
 BLUE_NAME="api-blue"
 GREEN_NAME="api-green"
 APP_PORT=3000
 NETWORK="api_network"
 _FT_CURL_IMG="curlimages/curl:8.7.1"
 
-SLOT_DIR="/var/lib/fieldtrack"
-ACTIVE_SLOT_FILE="$SLOT_DIR/active-slot"
-SLOT_BACKUP_FILE="/var/lib/fieldtrack/active-slot.backup"  # persists; same dir as primary
+# SLOT_DIR, ACTIVE_SLOT_FILE, LOCK_FILE, etc. — set by _ft_init_fieldtrack_state()
 
 NGINX_CONF="$INFRA_ROOT/nginx/live/api.conf"
 NGINX_LIVE_DIR="$INFRA_ROOT/nginx/live"
@@ -1232,10 +1288,6 @@ NGINX_BACKUP=""  # set inside switch_nginx()
 MAX_HISTORY=5
 MAX_HEALTH_ATTEMPTS=40
 HEALTH_INTERVAL=3
-
-LOCK_FILE="$SLOT_DIR/deploy.lock"
-SNAP_DIR="$SLOT_DIR"
-LAST_GOOD_FILE="$SNAP_DIR/last-good"
 
 # DEPLOY_HISTORY is set inside preflight() after _ft_load_env()
 DEPLOY_HISTORY=""

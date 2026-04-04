@@ -192,9 +192,16 @@ for dir in "$RUNTIME_DIR" "$LOG_DIR"; do
   if [ ! -d "$dir" ]; then
     warn "Runtime directory missing: $dir — creating it."
     install -d -m 750 "$dir" 2>/dev/null || sudo install -d -m 750 "$dir"
-    ok "Created: $dir"
+  fi
+  if [ ! -w "$dir" ]; then
+    warn "Runtime directory not writable by deploy user: $dir — fixing ownership."
+    sudo chown "$(id -un):$(id -gn)" "$dir" 2>/dev/null || true
+    sudo chmod u+rwx "$dir" 2>/dev/null || true
+  fi
+  if [ ! -w "$dir" ]; then
+    record_failure "Cannot write to $dir — run: sudo chown -R $(id -un):$(id -gn) $dir"
   else
-    ok "Directory exists: $dir"
+    ok "Directory ready (writable): $dir"
   fi
 done
 

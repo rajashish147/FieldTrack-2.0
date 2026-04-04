@@ -793,7 +793,8 @@ jobs:
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
-            ACTIVE_SLOT=$(cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            ACTIVE_SLOT=$(cat "$DEPLOY_ROOT/.fieldtrack/active-slot" 2>/dev/null || cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
             ACTIVE_CONTAINER="api-${ACTIVE_SLOT}"
             DEPLOY_STATUS="UNKNOWN"
 
@@ -838,7 +839,7 @@ jobs:
             [ -d "$DEPLOY_ROOT" ] || { echo "::error::DEPLOY_ROOT not found: $DEPLOY_ROOT"; exit 1; }
             cd "$DEPLOY_ROOT"
 
-            ACTIVE_SLOT=$(cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "blue")
+            ACTIVE_SLOT=$(cat "$DEPLOY_ROOT/.fieldtrack/active-slot" 2>/dev/null || cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "blue")
             ACTIVE_CONTAINER="api-$ACTIVE_SLOT"
 
             docker inspect "$ACTIVE_CONTAINER" >/dev/null 2>&1 || {
@@ -990,7 +991,8 @@ jobs:
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
-            ACTIVE_SLOT=$(cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            export DEPLOY_ROOT="${DEPLOY_ROOT:-$HOME/api}"
+            ACTIVE_SLOT=$(cat "$DEPLOY_ROOT/.fieldtrack/active-slot" 2>/dev/null || cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
             ACTIVE_CONTAINER="api-${ACTIVE_SLOT}"
             FT_CURL_IMG="curlimages/curl:8.7.1"
             READY_RESP=$(docker run --rm --network api_network "$FT_CURL_IMG" \
@@ -1065,5 +1067,5 @@ jobs:
             chmod +x scripts/*.sh
             ./scripts/deploy.sh --rollback --auto
 
-            ACTIVE_SLOT=$(cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
+            ACTIVE_SLOT=$(cat "$DEPLOY_ROOT/.fieldtrack/active-slot" 2>/dev/null || cat /var/lib/fieldtrack/active-slot 2>/dev/null || echo "unknown")
             echo "[DEPLOY] Rollback complete — slot=$ACTIVE_SLOT sha=${{ github.sha }}"

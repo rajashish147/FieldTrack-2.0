@@ -5,6 +5,8 @@
 # Deployment history (VPS-side file, never committed)
 .deploy_history
 .last_deploy
+# Fallback deploy state when /var/lib/fieldtrack is not writable (slot, lock)
+.fieldtrack/
 
 # ----------------
 # Dependencies
