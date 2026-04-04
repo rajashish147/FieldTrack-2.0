@@ -901,8 +901,9 @@ jobs:
           # Uses the same pattern as verify-stabilization.sh: only relative paths
           # (./infra/ or ../infra/) are forbidden. Absolute /opt/infra is allowed.
           # Scope: scripts/ and src/ only (not workflows where guard steps live).
-          if grep -rE "\./infra/|\.\.\./infra/" scripts/ src/ \
-               --binary-files=without-match --exclude-dir=node_modules 2>/dev/null \
+          if grep -rE "\./infra/|\.\./infra/" scripts/ src/ \
+               --binary-files=without-match --exclude-dir=node_modules \
+               --exclude=verify-stabilization.sh 2>/dev/null \
                | grep -Ev '^[^:]+:\s*(#|//)'; then
             echo "::error::Local repo-relative infra coupling (./infra/ or ../infra/) detected in scripts/ or src/"
             exit 1
