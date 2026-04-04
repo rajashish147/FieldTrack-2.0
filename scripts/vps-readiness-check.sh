@@ -13,7 +13,7 @@
 #
 # HARD FAILURES (exit 1):
 #   - Docker daemon not running
-#   - Ports 80 or 443 occupied by ANY non-docker-proxy, non-nginx process
+#   - Ports 80 or 443 occupied by processes other than docker-proxy / nginx
 #   - Any container has host port bindings (violates production architecture)
 #   - Required containers not attached to api_network
 #   - Required .env file missing
@@ -87,40 +87,34 @@ if ! docker network ls --format '{{.Name}}' | grep -Eq "^${NETWORK}$"; then
 else
   ok "Network '$NETWORK' exists."
 fi
-# ── CHECK 4: Ports 80 and 443 — no non-docker processes ──────────────────────
+# ── CHECK 4: Ports 80 and 443 — expected listeners only ─────────────────────
 #
-# Design: we do NOT auto-kill unknown processes. If port 80 or 443 is held by
-# a non-docker process (e.g., system nginx, apache, lighttpd), that is a VPS
-# configuration error that requires operator action. Silently killing unknown
-# processes risks breaking the system in unpredictable ways.
+# Design: we do NOT auto-kill unknown processes. Published container ports show
+# up as docker-proxy (full name in `ss -tlnp`; lsof often truncates COMMAND to
+# 8 chars e.g. "docker-pr", which broke older allowlists).
 #
-# Allowed occupants (hard-coded safe list):
-#   - docker-proxy  (managed by Docker / our nginx container)
-#   - nginx         (running as Docker container — docker exec nginx)
+# Use ss (same as elsewhere in this script) and allow:
+#   - docker-proxy / docker-pr (truncated) — Docker publishing nginx :80/:443
+#   - nginx — system or container worker name in ss output
 #
-# Everything else → hard fail with diagnostics.
+# Everything else on these ports → hard fail (e.g. apache bind-mount).
 echo ""
-echo "--- CHECK 4: Port 80/443 — no non-docker processes ---"
+echo "--- CHECK 4: Port 80/443 — docker-proxy / nginx only ---"
 _check_port() {
   local port="$1"
+  local listeners
+  listeners=$(sudo ss -tlnp "sport = :${port}" 2>/dev/null || ss -tlnp "sport = :${port}" 2>/dev/null || true)
 
-  # Check if anything is listening on the port at all
-  if ! ss -tlnp "sport = :${port}" 2>/dev/null | grep -q 'LISTEN'; then
+  if ! echo "$listeners" | grep -q 'LISTEN'; then
     ok "Port $port is free."
     return 0
   fi
 
-  # Check for non-docker-proxy, non-nginx processes via lsof
-  # lsof -i :PORT lists ALL processes holding the port.
-  # We exclude docker-proxy and nginx (expected Docker-managed processes).
-  NON_DOCKER=$(sudo lsof -i ":${port}" -sTCP:LISTEN -P -n 2>/dev/null \
-    | awk 'NR>1 {print $1, $2}' \
-    | grep -vE '^(docker-pro|nginx)' || true)
-
-  if [ -n "$NON_DOCKER" ]; then
-    record_failure "Port $port is occupied by a non-docker process."
-    echo "  Offending process(es):"
-    sudo lsof -i ":${port}" -sTCP:LISTEN -P -n 2>/dev/null | awk 'NR>1' | sed 's/^/    /'
+  # Any LISTEN line that does not reference an allowed process is a failure.
+  if echo "$listeners" | grep 'LISTEN' | grep -Ev 'docker-proxy|docker-pr|nginx' | grep -q .; then
+    record_failure "Port $port is occupied by an unexpected process (not docker-proxy/nginx)."
+    echo "  Listeners (ss -tlnp sport = :${port}):"
+    echo "$listeners" | sed 's/^/    /'
     echo "  This is a VPS configuration error. Stop the conflicting service before deploying."
     echo "  Example: sudo systemctl stop nginx  OR  sudo systemctl stop apache2"
     return 1
