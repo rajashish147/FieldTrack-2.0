@@ -241,8 +241,10 @@ jobs:
           # i.e., direct references to alertmanager, loki push clients, or
           # docker-compose.monitoring in the application source.
           # Exclude comment-only lines (-h suppresses filenames for grep -Ev).
+          # With bash -o pipefail (GHA default), grep exits 1 when there are zero matches;
+          # that must not fail the step — only non-empty LEAKS after filtering is an error.
           LEAKS=$(grep -rhE "(alertmanager|docker-compose\.monitoring)" src/ tests/ 2>/dev/null \
-                    | grep -Ev '^\s*(//|#|\*|/\*)')
+                    | grep -Ev '^\s*(//|#|\*|/\*)' || true)
           if [ -n "$LEAKS" ]; then
             echo "::error::Infra client references found in src/ or tests/"
             echo "$LEAKS"
