@@ -43,6 +43,7 @@ export const analyticsController = {
   /**
    * GET /admin/user-summary?userId=UUID&from=&to=
    * Per-user aggregate statistics for a date range.
+   * When userId is omitted, defaults to the authenticated user's own ID.
    */
   async getUserSummary(
     request: FastifyRequest,
@@ -50,9 +51,10 @@ export const analyticsController = {
   ): Promise<void> {
     try {
       const query = request.query as UserSummaryQuery;
+      const userId = query.userId ?? request.user.sub;
       const data = await analyticsService.getUserSummary(
         request,
-        query.userId,
+        userId,
         query.from,
         query.to,
       );

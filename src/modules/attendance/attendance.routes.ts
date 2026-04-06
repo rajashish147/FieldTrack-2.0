@@ -55,7 +55,6 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["attendance"],
         querystring: paginationSchema,
-
       },
       // preValidation ensures 401 fires before querystring validation
       preValidation: [authenticate],

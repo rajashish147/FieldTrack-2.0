@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { attendanceService } from "./attendance.service.js";
-import { paginationSchema, orgSessionsQuerySchema } from "./attendance.schema.js";
+import { paginationSchema } from "./attendance.schema.js";
 import { paginated, ok, handleError } from "../../utils/response.js";
 
 /**
@@ -38,22 +38,6 @@ export const attendanceController = {
             reply.status(200).send(response);
         } catch (error) {
             handleError(error, request, reply, "Unexpected error fetching user sessions");
-        }
-    },
-
-    async getOrgSessions(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-        try {
-            const parsed = orgSessionsQuerySchema.parse(request.query);
-            const result = await attendanceService.getOrgSessions(
-                request,
-                parsed.page,
-                parsed.limit,
-                parsed.status,
-                parsed.employee_id,
-            );
-            reply.status(200).send(paginated(result.data, parsed.page, parsed.limit, result.total));
-        } catch (error) {
-            handleError(error, request, reply, "Unexpected error fetching org sessions");
         }
     },
 };

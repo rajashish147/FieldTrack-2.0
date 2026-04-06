@@ -1,7 +1,7 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { locationsService } from "./locations.service.js";
 import { createLocationSchema, createLocationBatchSchema, sessionQuerySchema } from "./locations.schema.js";
-import { ok, handleError } from "../../utils/response.js";
+import { ok, fail, handleError } from "../../utils/response.js";
 
 /**
  * Location controller — extracts request data, validates, calls service, returns response.
@@ -30,7 +30,13 @@ export const locationsController = {
     async getRoute(request: FastifyRequest, reply: FastifyReply): Promise<void> {
         try {
             const parsedQuery = sessionQuerySchema.parse(request.query);
-            const route = await locationsService.getRoute(request, parsedQuery.sessionId);
+            // Accept both camelCase (sessionId) and snake_case (session_id)
+            const sessionId = parsedQuery.sessionId ?? parsedQuery.session_id;
+            if (!sessionId) {
+                reply.status(400).send(fail("sessionId is required", request.id, "VALIDATION_ERROR", { field: "sessionId" }));
+                return;
+            }
+            const route = await locationsService.getRoute(request, sessionId);
             reply.status(200).send(ok(route));
         } catch (error) {
             handleError(error, request, reply, "Unexpected error fetching location route");

@@ -78,10 +78,15 @@ export function handleError(
   }
 
   if (error instanceof ZodError) {
-    const message = error.issues.map((i) => i.message).join("; ");
+    // Build field-specific details for developer-friendly debugging
+    const fields = error.issues.map((i) => ({
+      field: i.path.length > 0 ? i.path.join(".") : "input",
+      message: i.message,
+    }));
+    const message = fields.map((f) => `${f.field}: ${f.message}`).join("; ");
     void reply
       .status(400)
-      .send(fail(`Validation failed: ${message}`, request.id, "VALIDATION_ERROR"));
+      .send(fail(`Validation failed: ${message}`, request.id, "VALIDATION_ERROR", { fields }));
     throw error;
   }
 

@@ -318,13 +318,16 @@ describe("Analytics Integration Tests", () => {
       expect(res.statusCode).toBe(403);
     });
 
-    it("returns 400 when metric param is missing", async () => {
+    it("defaults metric to 'distance' when param is omitted", async () => {
+      vi.mocked(analyticsRepository.getEmployeeMetricsAggregated).mockResolvedValue([]);
       const res = await app.inject({
         method: "GET",
         url: "/admin/leaderboard",
         headers: { authorization: `Bearer ${adminToken}` },
       });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { success: boolean; data: unknown[] };
+      expect(body.success).toBe(true);
     });
 
     it("returns 400 when metric value is invalid", async () => {

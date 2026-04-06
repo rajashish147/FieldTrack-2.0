@@ -22,7 +22,8 @@ export const dateRangeSchema = z.object({
 export const orgSummaryQuerySchema = dateRangeSchema;
 
 export const userSummaryQuerySchema = dateRangeSchema.extend({
-  userId: z.string().uuid({ message: "userId must be a valid UUID" }),
+  /** When omitted, the controller defaults to the authenticated user's own ID. */
+  userId: z.string().uuid({ message: "userId must be a valid UUID" }).optional(),
 });
 
 export const ANALYTICS_METRICS = ["distance", "duration", "sessions"] as const;
@@ -33,9 +34,10 @@ export const LEADERBOARD_METRICS = ["distance", "duration", "sessions", "expense
 export type LeaderboardMetric = (typeof LEADERBOARD_METRICS)[number];
 
 export const topPerformersQuerySchema = dateRangeSchema.extend({
+  /** Defaults to "distance" when omitted. */
   metric: z.enum(ANALYTICS_METRICS, {
     error: "metric must be distance, duration, or sessions",
-  }),
+  }).default("distance"),
   limit: z.coerce.number().int().min(1).max(50).default(10),
 });
 
@@ -155,9 +157,10 @@ export type SessionTrendQuery = z.infer<typeof sessionTrendQuerySchema>;
 // ─── Phase 20: Leaderboard ───────────────────────────────────────────────────
 
 export const leaderboardQuerySchema = dateRangeSchema.extend({
+  /** Defaults to "distance" when omitted. */
   metric: z.enum(LEADERBOARD_METRICS, {
     error: "metric must be distance, duration, sessions, or expenses",
-  }),
+  }).default("distance"),
   limit: z.coerce.number().int().min(1).max(50).default(10),
 });
 

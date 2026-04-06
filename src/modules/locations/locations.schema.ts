@@ -60,7 +60,9 @@ export const createLocationBatchSchema = z.object({
 export type CreateLocationBatchBody = z.infer<typeof createLocationBatchSchema>;
 
 export const sessionQuerySchema = z.object({
-    sessionId: z.string().uuid("sessionId must be a valid UUID"),
+    /** camelCase preferred; snake_case accepted for client compatibility. */
+    sessionId: z.string().uuid("sessionId must be a valid UUID").optional(),
+    session_id: z.string().uuid("session_id must be a valid UUID").optional(),
 });
 
 export type SessionQuery = z.infer<typeof sessionQuerySchema>;
