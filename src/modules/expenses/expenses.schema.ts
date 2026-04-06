@@ -24,6 +24,11 @@ export const createExpenseBodySchema = z.object({
       message: "receipt_url must use HTTPS",
     })
     .optional(),
+  idempotency_key: z
+    .string()
+    .min(1, { message: "idempotency_key must not be empty" })
+    .max(255, { message: "idempotency_key must not exceed 255 characters" })
+    .optional(),
 });
 
 export type CreateExpenseBody = z.infer<typeof createExpenseBodySchema>;

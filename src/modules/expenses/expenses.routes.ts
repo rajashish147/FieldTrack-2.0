@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
-import { requireRole } from "../../middleware/role-guard.js";
+import { requireRole, requireEmployeeHook } from "../../middleware/role-guard.js";
 import { expensesController } from "./expenses.controller.js";
 import { expensesRepository } from "./expenses.repository.js";
 import { handleError, paginated } from "../../utils/response.js";
@@ -54,9 +54,8 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
         }),
       },
       // EMPLOYEE only — the signed URL path embeds employeeId; ADMIN has no
-      // employee record and will be rejected by requireEmployeeContext() in the
-      // service layer anyway. Route-level guard makes the contract explicit.
-      preValidation: [authenticate, requireRole("EMPLOYEE")],
+      // employee record and will be rejected by requireEmployeeHook.
+      preValidation: [authenticate, requireRole("EMPLOYEE"), requireEmployeeHook],
     },
     expensesController.getReceiptUploadUrl,
   );
@@ -72,10 +71,9 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
           keyGenerator: (req: FastifyRequest): string => req.user?.sub ?? req.ip,
         },
       },
-      // No role restriction — admins who also have an employee record can submit
-      // expenses. The service layer's requireEmployeeContext() guard rejects any
-      // authenticated user who has no employees row (403).
-      preValidation: [authenticate],
+      // Employee-only: ADMIN users cannot create expenses. requireEmployeeHook
+      // enforces employee context at the route level (not just in service code).
+      preValidation: [authenticate, requireEmployeeHook],
     },
     expensesController.create,
   );

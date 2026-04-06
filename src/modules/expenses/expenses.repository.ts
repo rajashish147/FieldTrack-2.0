@@ -4,6 +4,7 @@ import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest } from "fastify";
 import type { Expense, ExpenseStatus, CreateExpenseBody } from "./expenses.schema.js";
 import type { EmployeeExpenseSummary } from "../../types/shared.js";
+import { BadRequestError } from "../../utils/errors.js";
 
 /** Enriched expense returned by list queries — adds employee code and name. */
 export type EnrichedExpense = Expense & {
@@ -42,6 +43,7 @@ export const expensesRepository = {
         amount: body.amount,
         description: body.description,
         receipt_url: body.receipt_url ?? null,
+        idempotency_key: body.idempotency_key ?? null,
         status: "PENDING",
         submitted_at: now,
       })
@@ -49,6 +51,10 @@ export const expensesRepository = {
       .single();
 
     if (error) {
+      // Unique constraint violation on idempotency_key = duplicate submission
+      if (error.code === "23505" && body.idempotency_key) {
+        throw new BadRequestError("Duplicate expense submission (idempotency key already used)");
+      }
       throw new Error(`Failed to create expense: ${error.message}`);
     }
     return data as Expense;

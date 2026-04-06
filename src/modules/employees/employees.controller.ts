@@ -8,6 +8,8 @@ import {
 import { ok, fail, paginated, handleError } from "../../utils/response.js";
 import { NotFoundError } from "../../utils/errors.js";
 import { emitEvent } from "../../utils/event-bus.js";
+import { supabaseServiceClient } from "../../config/supabase.js";
+import { attendanceRepository } from "../attendance/attendance.repository.js";
 
 export const employeesController = {
   /**
@@ -137,6 +139,50 @@ export const employeesController = {
       if (!existing) throw new NotFoundError("Employee not found");
 
       const employee = await employeesRepository.setActiveStatus(request, id, body.is_active);
+
+      // On deactivation: close any active attendance session and ban the auth user
+      // so the employee cannot log in again until re-activated.
+      if (!body.is_active && existing.user_id) {
+        // Close active session (fire-and-forget — best effort)
+        attendanceRepository.findOpenSession(request, id)
+          .then(async (session) => {
+            if (session) {
+              await attendanceRepository.closeSession(request, session.id);
+              request.log.info({ sessionId: session.id, employeeId: id }, "Auto-closed session on deactivation");
+            }
+          })
+          .catch((err: unknown) => {
+            request.log.warn({ employeeId: id, error: err instanceof Error ? err.message : String(err) }, "Failed to auto-close session on deactivation");
+          });
+
+        // Ban auth user so they cannot log in
+        supabaseServiceClient.auth.admin.updateUserById(existing.user_id, { ban_duration: "876000h" })
+          .then(({ error }) => {
+            if (error) {
+              request.log.warn({ userId: existing.user_id, error: error.message }, "Failed to ban auth user on deactivation");
+            } else {
+              request.log.info({ userId: existing.user_id, employeeId: id }, "Auth user banned on deactivation");
+            }
+          })
+          .catch((err: unknown) => {
+            request.log.warn({ userId: existing.user_id, error: err instanceof Error ? err.message : String(err) }, "Failed to ban auth user on deactivation");
+          });
+      }
+
+      // On re-activation: unban the auth user
+      if (body.is_active && existing.user_id) {
+        supabaseServiceClient.auth.admin.updateUserById(existing.user_id, { ban_duration: "none" })
+          .then(({ error }) => {
+            if (error) {
+              request.log.warn({ userId: existing.user_id, error: error.message }, "Failed to unban auth user on activation");
+            } else {
+              request.log.info({ userId: existing.user_id, employeeId: id }, "Auth user unbanned on activation");
+            }
+          })
+          .catch((err: unknown) => {
+            request.log.warn({ userId: existing.user_id, error: err instanceof Error ? err.message : String(err) }, "Failed to unban auth user on activation");
+          });
+      }
 
       request.log.info(
         {

@@ -27,3 +27,18 @@ export function requireAnyRole(...roles: JwtPayload["role"][]) {
         }
     };
 }
+
+/**
+ * preHandler hook that asserts the request has a resolved employee identity.
+ * Use AFTER authenticate. Rejects ADMIN users and any token missing employee_id.
+ *
+ * This is the route-level equivalent of requireEmployeeContext() from utils/errors.ts.
+ * Using it as a preHandler makes it impossible to forget the check in service code.
+ */
+export async function requireEmployeeHook(request: FastifyRequest): Promise<void> {
+    if (!request.employeeId) {
+        throw new ForbiddenError(
+            "Employee context required. This endpoint is for employees only.",
+        );
+    }
+}

@@ -718,6 +718,8 @@ start_inactive() {
         --name "$INACTIVE_NAME" \
         --network "$NETWORK" \
         --restart unless-stopped \
+        --memory "${API_MEMORY_LIMIT:-512m}" \
+        --cpus   "${API_CPU_LIMIT:-1.0}" \
         --label "api.sha=$IMAGE_SHA" \
         --label "api.slot=$INACTIVE" \
         --label "api.deploy_id=$DEPLOY_ID" \

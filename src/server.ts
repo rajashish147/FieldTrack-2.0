@@ -57,10 +57,9 @@ async function start(): Promise<void> {
     );
 
     if (shouldStartWorkersNow) {
-      const { startWorkers } = await import("./workers/startup.js");
+      const { startWorkers, startScheduledJobs } = await import("./workers/startup.js");
       const { performStartupRecovery } = await import("./workers/distance.worker.js");
       const { replayPendingRetryIntents } = await import("./workers/retry-intents.js");
-      const { startRetryIntentCleanupJob } = await import("./workers/retry-cleanup.job.js");
 
       // Phase 3: Redis resilience — worker startup failures must not crash the
       // process. BullMQ workers retry Redis connections internally; a transient
@@ -70,7 +69,7 @@ async function start(): Promise<void> {
         app.log.info({ activeWorkers: getExpectedWorkerCount() }, "[BOOT] workers started");
         performStartupRecovery(app);
         void replayPendingRetryIntents(app);
-        startRetryIntentCleanupJob(app);
+        await startScheduledJobs(app);
 
         // Restore any open circuit-breaker states from DB into Redis so that
         // delivery workers respect open circuits after a Redis flush/restart.

@@ -79,3 +79,17 @@ export async function startWorkers(app: FastifyInstance): Promise<void> {
   startSnapshotWorker(app);
   workersStarted = true;
 }
+
+/**
+ * Starts scheduled maintenance jobs (not BullMQ workers — no Redis dependency).
+ * Called after startWorkers() from server bootstrap.
+ */
+export async function startScheduledJobs(app: FastifyInstance): Promise<void> {
+  const [{ startRetryIntentCleanupJob }, { startReconciliationJob }] = await Promise.all([
+    import("./retry-cleanup.job.js"),
+    import("./reconciliation.job.js"),
+  ]);
+
+  startRetryIntentCleanupJob(app);
+  startReconciliationJob(app);
+}
