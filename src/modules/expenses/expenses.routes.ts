@@ -44,10 +44,9 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["expenses"],
         body: z.object({
-          /** Defaults to "jpg" when omitted. */
           extension: z.enum(["jpg", "jpeg", "png", "webp", "pdf"], {
             error: "extension must be one of: jpg, jpeg, png, webp, pdf",
-          }).default("jpg"),
+          }),
           // Optional: when provided, the server validates extension ↔ MIME alignment
           // before issuing a signed URL, giving the client an early rejection rather
           // than letting the upload fail at the storage layer.
