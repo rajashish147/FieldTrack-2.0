@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { profileService } from "./profile.service.js";
 import { ok, handleError } from "../../utils/response.js";
+import { employeesRepository } from "../employees/employees.repository.js";
 
 export const profileController = {
   /**
@@ -36,6 +37,7 @@ export const profileController = {
   /**
    * GET /admin/employees/:employeeId/profile
    * Admin access to any employee profile in their org.
+   * Returns comprehensive profile: info + stats + recent sessions + recent expenses.
    */
   async getEmployeeProfile(
     request: FastifyRequest,
@@ -43,7 +45,11 @@ export const profileController = {
   ): Promise<void> {
     try {
       const { employeeId } = request.params as { employeeId: string };
-      const data = await profileService.getEmployeeProfile(request, employeeId);
+      const data = await employeesRepository.getEmployeeProfile(request, employeeId);
+      if (!data) {
+        reply.status(404).send({ success: false, error: "Employee not found" });
+        return;
+      }
       reply.status(200).send(ok(data));
     } catch (error) {
       handleError(error, request, reply, "Unexpected error in getEmployeeProfile");

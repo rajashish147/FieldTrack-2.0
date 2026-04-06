@@ -26,6 +26,18 @@ vi.mock("../../../src/modules/profile/profile.repository.js", () => ({
   computeActivityStatusFromTimestamp: vi.fn().mockReturnValue("ACTIVE"),
 }));
 
+vi.mock("../../../src/modules/employees/employees.repository.js", () => ({
+  employeesRepository: {
+    getEmployeeProfile: vi.fn(),
+    listEmployees: vi.fn(),
+    getEmployeeById: vi.fn(),
+    createEmployee: vi.fn(),
+    updateEmployee: vi.fn(),
+    setEmployeeStatus: vi.fn(),
+    siteSearch: vi.fn(),
+  },
+}));
+
 vi.mock("../../../src/auth/jwtVerifier.js", () => ({
   verifySupabaseToken: vi.fn().mockImplementation(async (token: string) => {
     const parts = token.split(".");
@@ -44,6 +56,7 @@ import {
   TEST_ADMIN_ID,
 } from "../../setup/test-server.js";
 import { profileRepository } from "../../../src/modules/profile/profile.repository.js";
+import { employeesRepository } from "../../../src/modules/employees/employees.repository.js";
 
 // ─── Valid URL-param UUIDs ─────────────────────────────────────────────────────
 // TEST_EMPLOYEE_ID / TEST_ADMIN_ID don't satisfy Zod v4's strict RFC-4122 regex
@@ -82,6 +95,20 @@ const EMPLOYEE_STATS = {
 const EXPENSE_STATS = {
   expensesSubmitted: 5,
   expensesApproved: 3,
+};
+
+// ─── Fixture for the richer admin profile (from employeesRepository) ──────────
+const ADMIN_PROFILE_RESPONSE = {
+  employee: EMPLOYEE_ROW,
+  summary: {
+    totalSessions: 12,
+    totalDistanceKm: 148.5,
+    totalDurationSeconds: 43200,
+    expensesSubmitted: 5,
+    expensesApproved: 3,
+  },
+  recentSessions: [],
+  recentExpenses: [],
 };
 
 // ─── Test suite ───────────────────────────────────────────────────────────────
@@ -293,9 +320,7 @@ describe("Profile Integration Tests", () => {
     });
 
     it("returns 200 with the employee profile for an admin", async () => {
-      vi.mocked(profileRepository.getEmployeeById).mockResolvedValue(EMPLOYEE_ROW);
-      vi.mocked(profileRepository.getEmployeeStats).mockResolvedValue(EMPLOYEE_STATS);
-      vi.mocked(profileRepository.getEmployeeExpenseStats).mockResolvedValue(EXPENSE_STATS);
+      vi.mocked(employeesRepository.getEmployeeProfile).mockResolvedValue(ADMIN_PROFILE_RESPONSE);
 
       const res = await app.inject({
         method: "GET",
@@ -307,25 +332,19 @@ describe("Profile Integration Tests", () => {
       const body = JSON.parse(res.body) as {
         success: boolean;
         data: {
-          id: string;
-          name: string;
-          stats: {
-            totalSessions: number;
-            expensesSubmitted: number;
-          };
+          employee: { id: string; name: string };
+          summary: { totalSessions: number; expensesSubmitted: number };
         };
       };
       expect(body.success).toBe(true);
-      expect(body.data.id).toBe(VALID_EMPLOYEE_UUID);
-      expect(body.data.name).toBe("Alice Smith");
-      expect(body.data.stats.totalSessions).toBe(12);
-      expect(body.data.stats.expensesSubmitted).toBe(5);
+      expect(body.data.employee.id).toBe(VALID_EMPLOYEE_UUID);
+      expect(body.data.employee.name).toBe("Alice Smith");
+      expect(body.data.summary.totalSessions).toBe(12);
+      expect(body.data.summary.expensesSubmitted).toBe(5);
     });
 
-    it("passes the URL param employeeId to getEmployeeById", async () => {
-      vi.mocked(profileRepository.getEmployeeById).mockResolvedValue(EMPLOYEE_ROW);
-      vi.mocked(profileRepository.getEmployeeStats).mockResolvedValue(EMPLOYEE_STATS);
-      vi.mocked(profileRepository.getEmployeeExpenseStats).mockResolvedValue(EXPENSE_STATS);
+    it("passes the URL param employeeId to getEmployeeProfile", async () => {
+      vi.mocked(employeesRepository.getEmployeeProfile).mockResolvedValue(ADMIN_PROFILE_RESPONSE);
 
       await app.inject({
         method: "GET",
@@ -333,14 +352,14 @@ describe("Profile Integration Tests", () => {
         headers: { authorization: `Bearer ${adminToken}` },
       });
 
-      expect(profileRepository.getEmployeeById).toHaveBeenCalledWith(
+      expect(employeesRepository.getEmployeeProfile).toHaveBeenCalledWith(
         expect.anything(),
         VALID_EMPLOYEE_UUID,
       );
     });
 
     it("returns 404 when the target employee does not exist in the org", async () => {
-      vi.mocked(profileRepository.getEmployeeById).mockResolvedValue(null);
+      vi.mocked(employeesRepository.getEmployeeProfile).mockResolvedValue(null);
 
       const res = await app.inject({
         method: "GET",
@@ -354,7 +373,7 @@ describe("Profile Integration Tests", () => {
     it("returns 404 for a different org admin requesting a foreign employee", async () => {
       // Org B admin cannot see Org A employee — service enforces tenant via orgTable
       const orgBAdmin = signAdminToken(app, TEST_ADMIN_ID, TEST_ORG_ID_B);
-      vi.mocked(profileRepository.getEmployeeById).mockResolvedValue(null); // no match in Org B
+      vi.mocked(employeesRepository.getEmployeeProfile).mockResolvedValue(null); // no match in Org B
 
       const res = await app.inject({
         method: "GET",
@@ -366,22 +385,24 @@ describe("Profile Integration Tests", () => {
     });
 
     it("returns full profile with zero stats for new employees", async () => {
-      const newEmployee = {
-        ...EMPLOYEE_ROW,
-        id: VALID_ADMIN_UUID,
-        name: "New Employee",
-        employee_code: null,
+      const newEmployeeProfile = {
+        employee: {
+          ...EMPLOYEE_ROW,
+          id: VALID_ADMIN_UUID,
+          name: "New Employee",
+          employee_code: null,
+        },
+        summary: {
+          totalSessions: 0,
+          totalDistanceKm: 0,
+          totalDurationSeconds: 0,
+          expensesSubmitted: 0,
+          expensesApproved: 0,
+        },
+        recentSessions: [],
+        recentExpenses: [],
       };
-      vi.mocked(profileRepository.getEmployeeById).mockResolvedValue(newEmployee);
-      vi.mocked(profileRepository.getEmployeeStats).mockResolvedValue({
-        totalSessions: 0,
-        totalDistanceKm: 0,
-        totalDurationSeconds: 0,
-      });
-      vi.mocked(profileRepository.getEmployeeExpenseStats).mockResolvedValue({
-        expensesSubmitted: 0,
-        expensesApproved: 0,
-      });
+      vi.mocked(employeesRepository.getEmployeeProfile).mockResolvedValue(newEmployeeProfile);
 
       const res = await app.inject({
         method: "GET",
@@ -391,10 +412,10 @@ describe("Profile Integration Tests", () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body) as {
-        data: { stats: { totalSessions: number; totalDistanceKm: number } };
+        data: { summary: { totalSessions: number; totalDistanceKm: number } };
       };
-      expect(body.data.stats.totalSessions).toBe(0);
-      expect(body.data.stats.totalDistanceKm).toBe(0);
+      expect(body.data.summary.totalSessions).toBe(0);
+      expect(body.data.summary.totalDistanceKm).toBe(0);
     });
   });
 });

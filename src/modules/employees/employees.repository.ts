@@ -230,5 +230,154 @@ export const employeesRepository = {
 
     return { data: enriched, total: count ?? 0, source: "snapshot" as const };
   },
+
+  /**
+   * GET /admin/employees/:id/profile
+   * Returns comprehensive profile: employee info + activity stats + recent sessions + expenses.
+   */
+  async getEmployeeProfile(
+    request: FastifyRequest,
+    employeeId: string,
+  ): Promise<{
+    employee: Employee & { is_checked_in: boolean; last_check_in_at: string | null };
+    summary: {
+      totalSessions: number;
+      totalDistanceKm: number;
+      totalDurationSeconds: number;
+      expensesSubmitted: number;
+      expensesApproved: number;
+    };
+    recentSessions: Array<Record<string, unknown>>;
+    expenses: Array<Record<string, unknown>>;
+  } | null> {
+    // Fetch employee
+    const { data: emp, error: empErr } = await orgTable(request, "employees")
+      .select(EMPLOYEE_COLS)
+      .eq("id", employeeId)
+      .single();
+
+    if (empErr?.code === "PGRST116" || !emp) return null;
+    if (empErr) throw new Error(`Failed to fetch employee: ${empErr.message}`);
+
+    // Fetch last state
+    const { data: state } = await supabase
+      .from("employee_last_state")
+      .select("is_checked_in, last_check_in_at")
+      .eq("employee_id", employeeId)
+      .eq("organization_id", request.organizationId)
+      .single();
+
+    // Fetch session stats
+    const { data: sessionStats } = await supabase
+      .from("attendance_sessions")
+      .select("id", { count: "exact", head: true })
+      .eq("employee_id", employeeId)
+      .eq("organization_id", request.organizationId);
+
+    // Fetch distance/duration aggregates from daily metrics
+    const { data: metrics } = await supabase
+      .from("employee_daily_metrics")
+      .select("total_distance_km, total_duration_seconds")
+      .eq("employee_id", employeeId)
+      .eq("organization_id", request.organizationId);
+
+    const totalDistanceKm = (metrics ?? []).reduce((sum, m) => sum + (Number(m.total_distance_km) || 0), 0);
+    const totalDurationSeconds = (metrics ?? []).reduce((sum, m) => sum + (Number(m.total_duration_seconds) || 0), 0);
+
+    // Fetch expense stats
+    const { count: expSubmitted } = await supabase
+      .from("expenses")
+      .select("id", { count: "exact", head: true })
+      .eq("employee_id", employeeId)
+      .eq("organization_id", request.organizationId);
+
+    const { count: expApproved } = await supabase
+      .from("expenses")
+      .select("id", { count: "exact", head: true })
+      .eq("employee_id", employeeId)
+      .eq("organization_id", request.organizationId)
+      .eq("status", "APPROVED");
+
+    // Fetch 10 most recent sessions
+    const { data: recentSessions } = await orgTable(request, "attendance_sessions")
+      .select("id, checkin_at, checkout_at, total_distance_km, total_duration_seconds, distance_recalculation_status, created_at")
+      .eq("employee_id", employeeId)
+      .order("checkin_at", { ascending: false })
+      .range(0, 9);
+
+    // Fetch 10 most recent expenses
+    const { data: recentExpenses } = await orgTable(request, "expenses")
+      .select("id, amount, description, status, submitted_at, reviewed_at")
+      .eq("employee_id", employeeId)
+      .order("submitted_at", { ascending: false })
+      .range(0, 9);
+
+    return {
+      employee: {
+        ...(emp as Employee),
+        is_checked_in: (state as Record<string, unknown>)?.is_checked_in === true,
+        last_check_in_at: ((state as Record<string, unknown>)?.last_check_in_at as string) ?? null,
+      },
+      summary: {
+        totalSessions: (sessionStats as unknown[])?.length ?? 0,
+        totalDistanceKm: Math.round(totalDistanceKm * 100) / 100,
+        totalDurationSeconds: Math.round(totalDurationSeconds),
+        expensesSubmitted: expSubmitted ?? 0,
+        expensesApproved: expApproved ?? 0,
+      },
+      recentSessions: (recentSessions ?? []) as Array<Record<string, unknown>>,
+      expenses: (recentExpenses ?? []) as Array<Record<string, unknown>>,
+    };
+  },
+
+  /**
+   * Site-wide search across employees, expenses, and sessions.
+   * Uses PostgreSQL trigram matching for fuzzy search.
+   */
+  async siteSearch(
+    request: FastifyRequest,
+    query: string,
+    limit: number,
+  ): Promise<{
+    employees: Array<{ id: string; name: string; employee_code: string | null; is_active: boolean }>;
+    expenses: Array<{ id: string; description: string; amount: number; status: string; employee_name: string | null }>;
+  }> {
+    const orgId = request.organizationId;
+    const searchPattern = `%${query}%`;
+
+    // Search employees by name or code
+    const { data: employees } = await supabase
+      .from("employees")
+      .select("id, name, employee_code, is_active")
+      .eq("organization_id", orgId)
+      .or(`name.ilike.${searchPattern},employee_code.ilike.${searchPattern}`)
+      .order("name")
+      .limit(limit);
+
+    // Search expenses by description
+    const { data: expenses } = await supabase
+      .from("expenses")
+      .select("id, description, amount, status, employees!expenses_employee_id_fkey(name)")
+      .eq("organization_id", orgId)
+      .ilike("description", searchPattern)
+      .order("submitted_at", { ascending: false })
+      .limit(limit);
+
+    const flatExpenses = ((expenses ?? []) as Array<Record<string, unknown>>).map((row) => {
+      const emp = row.employees as { name?: string } | null;
+      return {
+        id: row.id as string,
+        description: row.description as string,
+        amount: row.amount as number,
+        status: row.status as string,
+        employee_name: emp?.name ?? null,
+      };
+    });
+
+    return {
+      employees: (employees ?? []) as Array<{ id: string; name: string; employee_code: string | null; is_active: boolean }>,
+      expenses: flatExpenses,
+    };
+  },
 };
 

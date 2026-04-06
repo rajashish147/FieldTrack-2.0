@@ -72,17 +72,15 @@ export const expensesController = {
   ): Promise<void> {
     try {
       const parsed = expensePaginationSchema.parse(request.query);
-      const query = request.query as Record<string, string | undefined>;
-      const employeeId = query.employee_id;
-      const statusFilter = query.status; // optional: "pending" | "approved" | "rejected"
+      const { page, limit, status: statusFilter, employee_id: employeeId, search: _search } = parsed;
       const t0 = Date.now();
 
       // feat-1: fast path for PENDING expenses view (most common admin use case)
-      if (!statusFilter || statusFilter === "pending") {
+      if (statusFilter === "all" || statusFilter === "PENDING") {
         const snapResult = await expensesRepository.findPendingFromSnapshot(
           request,
-          parsed.page,
-          parsed.limit,
+          page,
+          limit,
           employeeId,
         );
 
@@ -105,7 +103,7 @@ export const expensesController = {
         }
 
         if (snapResult.source === "snapshot") {
-          const response = paginated(snapResult.data, parsed.page, parsed.limit, snapResult.total);
+          const response = paginated(snapResult.data, page, limit, snapResult.total);
           reply.status(200).send(response);
           return;
         }
@@ -115,12 +113,12 @@ export const expensesController = {
       // Full table query (non-pending status or snapshot unavailable)
       const result = await expensesService.getOrgExpenses(
         request,
-        parsed.page,
-        parsed.limit,
+        page,
+        limit,
         employeeId,
       );
       const durationMs = Date.now() - t0;
-      const response = paginated(result.data, parsed.page, parsed.limit, result.total);
+      const response = paginated(result.data, page, limit, result.total);
       const payloadBytes = Buffer.byteLength(JSON.stringify(response));
       request.log.info(
         { route: "/admin/expenses", payloadBytes, expenseCount: result.data.length, durationMs, source: "full_table" },

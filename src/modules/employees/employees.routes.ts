@@ -99,5 +99,24 @@ export async function employeesRoutes(app: FastifyInstance): Promise<void> {
     },
     employeesController.setStatus,
   );
+
+  /**
+   * GET /admin/search
+   * Site-wide search across employees, expenses, and sessions using trigram matching.
+   */
+  app.get<{ Querystring: { q: string; limit: number } }>(
+    "/admin/search",
+    {
+      schema: {
+        tags: ["admin"],
+        querystring: z.object({
+          q: z.string().min(1).max(200),
+          limit: z.coerce.number().int().min(1).max(50).default(10),
+        }),
+      },
+      preValidation: [authenticate, requireRole("ADMIN")],
+    },
+    employeesController.search,
+  );
 }
 

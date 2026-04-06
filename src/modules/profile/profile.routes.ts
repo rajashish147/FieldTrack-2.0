@@ -57,7 +57,6 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin"],
         params: z.object({ employeeId: z.string().uuid() }),
-        response: { 200: profileResponseSchema.describe("Admin employee profile") },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },

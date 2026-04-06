@@ -14,7 +14,7 @@
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
-export type UserRole = "ADMIN" | "EMPLOYEE" | "SUPERVISOR" | "FINANCE" | "TEAM_LEAD";
+export type UserRole = "ADMIN" | "EMPLOYEE";
 export type ExpenseStatus = "PENDING" | "APPROVED" | "REJECTED";
 export type ActivityStatus = "ACTIVE" | "RECENT" | "INACTIVE";
 

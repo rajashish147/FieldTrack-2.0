@@ -51,7 +51,13 @@ export type UpdateExpenseStatusBody = z.infer<
 // to support large datasets without heavy DB scans.
 export const expensePaginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  /** Filter by expense status. Omit or "all" to return all statuses. */
+  status: z.enum(["all", "PENDING", "APPROVED", "REJECTED"]).default("all"),
+  /** Filter by employee UUID. */
+  employee_id: z.string().uuid().optional(),
+  /** Partial text search on expense description. */
+  search: z.string().optional(),
 });
 
 export type ExpensePaginationQuery = z.infer<typeof expensePaginationSchema>;

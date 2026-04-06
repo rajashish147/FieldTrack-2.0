@@ -10,6 +10,7 @@ import { NotFoundError } from "../../utils/errors.js";
 import { emitEvent } from "../../utils/event-bus.js";
 import { supabaseServiceClient } from "../../config/supabase.js";
 import { attendanceRepository } from "../attendance/attendance.repository.js";
+import { getCached } from "../../utils/cache.js";
 
 export const employeesController = {
   /**
@@ -197,6 +198,50 @@ export const employeesController = {
       reply.status(200).send(ok(employee));
     } catch (error) {
       handleError(error, request, reply, "Unexpected error updating employee status");
+    }
+  },
+
+  /**
+   * GET /admin/employees/:id/profile
+   * Returns comprehensive employee profile: info, activity stats, recent sessions, expenses.
+   */
+  async getProfile(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ): Promise<void> {
+    try {
+      const { id } = request.params;
+      const cacheKey = `org:${request.organizationId}:employee-profile:${id}`;
+      const profile = await getCached(cacheKey, 120, () =>
+        employeesRepository.getEmployeeProfile(request, id),
+      );
+      if (!profile) {
+        reply.status(404).send(fail("Employee not found", request.id));
+        return;
+      }
+      reply.status(200).send(ok(profile));
+    } catch (error) {
+      handleError(error, request, reply, "Unexpected error fetching employee profile");
+    }
+  },
+
+  /**
+   * GET /admin/search
+   * Site-wide search across employees, expenses, and sessions using trigram matching.
+   */
+  async search(
+    request: FastifyRequest<{ Querystring: { q: string; limit: number } }>,
+    reply: FastifyReply,
+  ): Promise<void> {
+    try {
+      const { q, limit } = request.query as { q: string; limit: number };
+      const cacheKey = `org:${request.organizationId}:search:${q}:${limit}`;
+      const results = await getCached(cacheKey, 30, () =>
+        employeesRepository.siteSearch(request, q, limit),
+      );
+      reply.status(200).send(ok(results));
+    } catch (error) {
+      handleError(error, request, reply, "Unexpected error performing search");
     }
   },
 };

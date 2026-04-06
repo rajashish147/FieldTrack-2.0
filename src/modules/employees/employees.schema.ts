@@ -28,6 +28,8 @@ export const employeeListQuerySchema = z.object({
   active: z.enum(["true", "false"]).optional(),
   /** Partial name search (case-insensitive). */
   search: z.string().optional(),
+  /** Segment: 'active' (checked-in), 'recent' (active in 24h), 'inactive' (>24h). Omit for all. */
+  segment: z.enum(["active", "recent", "inactive"]).optional(),
 });
 
 export type EmployeeListQuery = z.infer<typeof employeeListQuerySchema>;

@@ -20,6 +20,7 @@ export type PaginationMeta = {
   page: number;
   limit: number;
   total: number;
+  totalPages: number;
 };
 
 export type PaginatedSuccessResponse<T> = {
@@ -36,7 +37,8 @@ export function paginated<T>(
   limit: number,
   total: number,
 ): PaginatedSuccessResponse<T> {
-  return { success: true, data, pagination: { page, limit, total } };
+  const totalPages = limit > 0 ? Math.ceil(total / limit) : 0;
+  return { success: true, data, pagination: { page, limit, total, totalPages } };
 }
 
 export function ok<T>(data: T): SuccessResponse<T> {
