@@ -17,8 +17,10 @@ import abuseLoggingPlugin from "./plugins/security/abuse-logging.plugin.js";
 // Phase 19: OpenAPI documentation
 import openApiPlugin from "./plugins/openapi.plugin.js";
 import { registerZod } from "./plugins/zod.plugin.js";
-// Phase 22: Response compression (gzip + brotli)
-import compressPlugin from "@fastify/compress";
+// @fastify/compress intentionally removed: on Node.js >= 22.15, the
+// peek-stream dependency (fastify-compress-#355) causes silent onSend
+// hook failures that return an empty body with status 200.
+// Response compression is handled instead at the Nginx/Cloudflare layer.
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -170,16 +172,6 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Prometheus metrics — GET /metrics (token-protected in production)
   await app.register(prometheusPlugin);
-
-  // Phase 22: Response compression — gzip and brotli for all responses > 1 KB.
-  // Heavy admin responses (sessions, analytics, expenses lists) shrink 60-80%,
-  // reducing response time significantly over slower public internet links.
-  // Order: register before routes so all route handlers have compression available.
-  await app.register(compressPlugin, {
-    global: true,        // compress all responses by default
-    threshold: 1024,     // only compress responses ≥ 1 KB
-    encodings: ["br", "gzip", "deflate"],
-  });
 
   // Phase 19: OpenAPI documentation plugin — must be registered before routes
   // so that route schemas are properly captured in the OpenAPI specification
