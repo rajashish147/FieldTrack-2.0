@@ -64,7 +64,7 @@ export const employeesRepository = {
 
     let q = orgTable(request, "employees")
       .select(EMPLOYEE_COLS, { count: "exact" })
-      .order("name", { ascending: true })
+      .order("employee_code", { ascending: true })
       .range(offset, offset + limit - 1);
 
     if (active !== undefined) {
@@ -154,11 +154,12 @@ export const employeesRepository = {
       last_latitude: number | null;
       last_longitude: number | null;
       last_location_at: string | null;
+      activity_status: "ACTIVE" | "RECENT" | "INACTIVE";
     })[];
     total: number;
     source: "snapshot" | "employees";
   }> {
-    const { page, limit, active, search } = query;
+    const { page, limit, active, search, segment } = query;
     const offset = (page - 1) * limit;
 
     let q = supabase
@@ -172,7 +173,7 @@ export const employeesRepository = {
         { count: "exact" },
       )
       .eq("organization_id", request.organizationId)
-      .order("name", { ascending: true })
+      .order("employee_code", { ascending: true })
       .range(offset, offset + limit - 1);
 
     if (active !== undefined) {
@@ -199,6 +200,7 @@ export const employeesRepository = {
           last_latitude:     null,
           last_longitude:    null,
           last_location_at:  null,
+          activity_status: "INACTIVE" as const,
         })),
         source: "employees",
       };
@@ -217,18 +219,35 @@ export const employeesRepository = {
 
     const enriched = ((data ?? []) as unknown as EmployeeWithState[]).map((row) => {
       const { employee_last_state: state, ...employee } = row;
+      const isCheckedIn = state?.is_checked_in ?? false;
+      let activityStatus: "ACTIVE" | "RECENT" | "INACTIVE" = "INACTIVE";
+      if (isCheckedIn) {
+        activityStatus = "ACTIVE";
+      } else if (state?.last_check_out_at) {
+        const ageMs = Date.now() - new Date(state.last_check_out_at).getTime();
+        activityStatus = ageMs < 86_400_000 ? "RECENT" : "INACTIVE";
+      }
       return {
         ...(employee as Employee),
-        is_checked_in:    state?.is_checked_in ?? false,
+        is_checked_in:    isCheckedIn,
         last_check_in_at:  state?.last_check_in_at ?? null,
         last_check_out_at: state?.last_check_out_at ?? null,
         last_latitude:     state?.last_latitude ?? null,
         last_longitude:    state?.last_longitude ?? null,
         last_location_at:  state?.last_location_at ?? null,
+        activity_status:   activityStatus,
       };
     });
 
-    return { data: enriched, total: count ?? 0, source: "snapshot" as const };
+    // Apply segment filter in-memory (segment is derived from snapshot state, not a DB column)
+    const filtered = segment
+      ? enriched.filter((e) => e.activity_status === segment.toUpperCase())
+      : enriched;
+
+    // When filtering by segment, total reflects the filtered count
+    const effectiveTotal = segment ? filtered.length : (count ?? 0);
+
+    return { data: filtered, total: effectiveTotal, source: "snapshot" as const };
   },
 
   /**

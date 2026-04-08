@@ -143,8 +143,9 @@ export const expensesService = {
     page: number,
     limit: number,
     employeeId?: string,
+    status?: string,
   ): Promise<{ data: EnrichedExpense[]; total: number }> {
-    return expensesRepository.findExpensesByOrg(request, page, limit, employeeId);
+    return expensesRepository.findExpensesByOrg(request, page, limit, employeeId, status);
   },
 
   /**

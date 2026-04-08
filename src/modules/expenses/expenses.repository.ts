@@ -113,6 +113,7 @@ export const expensesRepository = {
     page: number,
     limit: number,
     employeeId?: string,
+    status?: string,
   ): Promise<{ data: EnrichedExpense[]; total: number }> {
     // Phase 30: count:"estimated" eliminates the shadow SELECT COUNT(*) query.
     // idx_expenses_org_submitted_desc (org_id, submitted_at DESC) covers the
@@ -124,6 +125,11 @@ export const expensesRepository = {
     if (employeeId) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       baseQuery = (baseQuery as any).eq("employee_id", employeeId);
+    }
+
+    if (status && status !== "all") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      baseQuery = (baseQuery as any).eq("status", status);
     }
 
     const { data, error, count } = await applyPagination(baseQuery, page, limit);

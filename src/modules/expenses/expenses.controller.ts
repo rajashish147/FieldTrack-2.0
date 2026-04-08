@@ -76,7 +76,8 @@ export const expensesController = {
       const t0 = Date.now();
 
       // feat-1: fast path for PENDING expenses view (most common admin use case)
-      if (statusFilter === "all" || statusFilter === "PENDING") {
+      // Only use snapshot when explicitly requesting PENDING status
+      if (statusFilter === "PENDING") {
         const snapResult = await expensesRepository.findPendingFromSnapshot(
           request,
           page,
@@ -116,6 +117,7 @@ export const expensesController = {
         page,
         limit,
         employeeId,
+        statusFilter,
       );
       const durationMs = Date.now() - t0;
       const response = paginated(result.data, page, limit, result.total);
