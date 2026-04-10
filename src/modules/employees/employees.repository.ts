@@ -4,9 +4,10 @@ import type { FastifyRequest } from "fastify";
 import type { Employee } from "../../types/db.js";
 import type { CreateEmployeeBody, UpdateEmployeeBody, EmployeeListQuery } from "./employees.schema.js";
 import { BadRequestError } from "../../utils/errors.js";
+import { computeActivityStatus } from "../../utils/activity.js";
 
 const EMPLOYEE_COLS =
-  "id, organization_id, user_id, name, employee_code, phone, is_active, created_at, updated_at";
+  "id, organization_id, user_id, name, employee_code, employee_number, phone, is_active, last_activity_at, created_at, updated_at";
 
 /** Generate the next sequential employee code via the DB function. */
 async function nextEmployeeCode(prefix = "EMP"): Promise<string> {
@@ -64,6 +65,9 @@ export const employeesRepository = {
 
     let q = orgTable(request, "employees")
       .select(EMPLOYEE_COLS, { count: "exact" })
+      // Numeric-safe sort: employee_number extracts the numeric portion of
+      // employee_code (EMP1→1, EMP2→2, EMP10→10) for natural ordering.
+      .order("employee_number", { ascending: true, nullsFirst: false })
       .order("employee_code", { ascending: true })
       .range(offset, offset + limit - 1);
 
@@ -162,6 +166,13 @@ export const employeesRepository = {
     const { page, limit, active, search, segment } = query;
     const offset = (page - 1) * limit;
 
+    // When a segment filter is requested, query employee_last_state as the
+    // primary table so pagination counts reflect only the matching segment —
+    // not the total employee count before filtering.
+    if (segment) {
+      return this.listWithLastStateBySegment(request, query);
+    }
+
     let q = supabase
       .from("employees")
       .select(
@@ -173,6 +184,8 @@ export const employeesRepository = {
         { count: "exact" },
       )
       .eq("organization_id", request.organizationId)
+      // Numeric-safe sort: employee_number for natural EMP1,EMP2,...,EMP10 ordering
+      .order("employee_number", { ascending: true, nullsFirst: false })
       .order("employee_code", { ascending: true })
       .range(offset, offset + limit - 1);
 
@@ -220,13 +233,7 @@ export const employeesRepository = {
     const enriched = ((data ?? []) as unknown as EmployeeWithState[]).map((row) => {
       const { employee_last_state: state, ...employee } = row;
       const isCheckedIn = state?.is_checked_in ?? false;
-      let activityStatus: "ACTIVE" | "RECENT" | "INACTIVE" = "INACTIVE";
-      if (isCheckedIn) {
-        activityStatus = "ACTIVE";
-      } else if (state?.last_check_out_at) {
-        const ageMs = Date.now() - new Date(state.last_check_out_at).getTime();
-        activityStatus = ageMs < 86_400_000 ? "RECENT" : "INACTIVE";
-      }
+      const activityStatus = computeActivityStatus(isCheckedIn, state?.last_check_out_at ?? null);
       return {
         ...(employee as Employee),
         is_checked_in:    isCheckedIn,
@@ -239,15 +246,188 @@ export const employeesRepository = {
       };
     });
 
-    // Apply segment filter in-memory (segment is derived from snapshot state, not a DB column)
-    const filtered = segment
-      ? enriched.filter((e) => e.activity_status === segment.toUpperCase())
-      : enriched;
+    return { data: enriched, total: count ?? 0, source: "snapshot" as const };
+  },
 
-    // When filtering by segment, total reflects the filtered count
-    const effectiveTotal = segment ? filtered.length : (count ?? 0);
+  /**
+   * SQL-side segment filtering for paginated employee lists.
+   *
+   * Queries employee_last_state as the primary table so COUNT(*) reflects
+   * only the matching segment, not the total employee population.
+   * This gives correct pagination totals when segment is specified.
+   *
+   *   active   → is_checked_in = true
+   *   recent   → is_checked_in = false AND last_check_out_at >= now() - 24h
+   *   inactive → query employees LEFT JOIN state WHERE NOT active AND NOT recent
+   */
+  async listWithLastStateBySegment(
+    request: FastifyRequest,
+    query: EmployeeListQuery,
+  ): Promise<{
+    data: (Employee & {
+      is_checked_in: boolean;
+      last_check_in_at: string | null;
+      last_check_out_at: string | null;
+      last_latitude: number | null;
+      last_longitude: number | null;
+      last_location_at: string | null;
+      activity_status: "ACTIVE" | "RECENT" | "INACTIVE";
+    })[];
+    total: number;
+    source: "snapshot" | "employees";
+  }> {
+    const { page, limit, active, search, segment } = query;
+    const offset = (page - 1) * limit;
+    const orgId = request.organizationId;
+    const recentCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    return { data: filtered, total: effectiveTotal, source: "snapshot" as const };
+    type StateWithEmployee = {
+      is_checked_in: boolean;
+      last_check_in_at: string | null;
+      last_check_out_at: string | null;
+      last_latitude: number | null;
+      last_longitude: number | null;
+      last_location_at: string | null;
+      updated_at: string;
+      employees: Employee | null;
+    };
+
+    if (segment === "active" || segment === "recent") {
+      // Query employee_last_state filtered by segment, join employees
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q: any = supabase
+        .from("employee_last_state")
+        .select(
+          `is_checked_in, last_check_in_at, last_check_out_at,
+           last_latitude, last_longitude, last_location_at, updated_at,
+           employees!employee_last_state_employee_id_fkey(${EMPLOYEE_COLS})`,
+          { count: "exact" },
+        )
+        .eq("organization_id", orgId)
+        .order("last_check_in_at", { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (segment === "active") {
+        q = q.eq("is_checked_in", true);
+      } else {
+        // recent: checked out within 24h
+        q = q.eq("is_checked_in", false).gte("last_check_out_at", recentCutoff);
+      }
+
+      const { data, error, count } = await q;
+      if (error) {
+        // On error fall back to listEmployees
+        return {
+          data: [],
+          total: 0,
+          source: "employees" as const,
+        };
+      }
+
+      const rows = ((data ?? []) as unknown as StateWithEmployee[])
+        .filter((row) => {
+          const emp = row.employees;
+          if (!emp) return false;
+          if (active !== undefined && emp.is_active !== (active === "true")) return false;
+          if (search && !emp.name.toLowerCase().includes(search.toLowerCase())) return false;
+          return true;
+        })
+        .map((row) => {
+          const emp = row.employees as Employee;
+          const activityStatus = computeActivityStatus(row.is_checked_in, row.last_check_out_at);
+          return {
+            ...emp,
+            is_checked_in:    row.is_checked_in,
+            last_check_in_at:  row.last_check_in_at,
+            last_check_out_at: row.last_check_out_at,
+            last_latitude:     row.last_latitude,
+            last_longitude:    row.last_longitude,
+            last_location_at:  row.last_location_at,
+            activity_status:   activityStatus,
+          };
+        });
+
+      return { data: rows, total: count ?? rows.length, source: "snapshot" as const };
+    }
+
+    // segment === "inactive": employees that are NOT active and NOT recent.
+    // Uses deterministic NOT EXISTS SQL via RPC — employees with no employee_last_state
+    // row are correctly included in the inactive segment (no-snapshot employees).
+    const { data: inactiveData, error: inactiveError } = await supabase.rpc(
+      "list_inactive_employees",
+      {
+        p_org_id: orgId,
+        p_search: search || null,
+        p_is_active: active !== undefined ? active === "true" : null,
+        p_limit: limit,
+        p_offset: offset,
+      },
+    );
+
+    if (inactiveError) {
+      const fallback = await this.listEmployees(request, query);
+      return {
+        ...fallback,
+        data: fallback.data.map((e) => ({
+          ...e,
+          is_checked_in:    false,
+          last_check_in_at:  null,
+          last_check_out_at: null,
+          last_latitude:     null,
+          last_longitude:    null,
+          last_location_at:  null,
+          activity_status: "INACTIVE" as const,
+        })),
+        source: "employees" as const,
+      };
+    }
+
+    type InactiveRow = {
+      id: string;
+      organization_id: string;
+      user_id: string | null;
+      name: string;
+      employee_code: string;
+      employee_number: number | null;
+      phone: string | null;
+      is_active: boolean;
+      last_activity_at: string | null;
+      created_at: string;
+      updated_at: string;
+      is_checked_in: boolean;
+      last_check_in_at: string | null;
+      last_check_out_at: string | null;
+      last_latitude: number | null;
+      last_longitude: number | null;
+      last_location_at: string | null;
+      total_count: number;
+    };
+
+    const rows = (inactiveData ?? []) as InactiveRow[];
+    const totalCount = rows.length > 0 ? Number(rows[0].total_count) : 0;
+
+    const inactiveRows = rows.map((row) => ({
+      id: row.id,
+      organization_id: row.organization_id,
+      user_id: row.user_id,
+      name: row.name,
+      employee_code: row.employee_code,
+      phone: row.phone,
+      is_active: row.is_active,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      employee_number:   row.employee_number ?? null,
+      last_activity_at:  row.last_activity_at ?? null,
+      is_checked_in:    false as const,
+      last_check_in_at:  row.last_check_in_at,
+      last_check_out_at: row.last_check_out_at,
+      last_latitude:     row.last_latitude,
+      last_longitude:    row.last_longitude,
+      last_location_at:  row.last_location_at,
+      activity_status:   "INACTIVE" as const,
+    }));
+
+    return { data: inactiveRows, total: totalCount, source: "snapshot" as const };
   },
 
   /**

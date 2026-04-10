@@ -52,8 +52,8 @@ export type UpdateExpenseStatusBody = z.infer<
 export const expensePaginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  /** Filter by expense status. Omit or "all" to return all statuses. */
-  status: z.enum(["all", "PENDING", "APPROVED", "REJECTED"]).default("all"),
+  /** Filter by expense status. Omit or "all" to return all statuses. "processed" = APPROVED + REJECTED. */
+  status: z.enum(["all", "PENDING", "APPROVED", "REJECTED", "processed"]).default("all"),
   /** Filter by employee UUID. */
   employee_id: z.string().uuid().optional(),
   /** Partial text search on expense description. */

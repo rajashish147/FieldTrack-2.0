@@ -217,6 +217,12 @@ export interface AdminDashboardData {
   sessionTrend: SessionTrendEntry[];
   /** Top-5 employees ranked by distance over the last 30 days (from employee_daily_metrics). */
   leaderboard: LeaderboardEntry[];
+  /**
+   * ISO-8601 timestamp of the most recent snapshot update (org_dashboard_snapshot.updated_at).
+   * Use to display "Last updated X seconds ago" in the UI for eventual consistency transparency.
+   * Null when the snapshot has never been written for this org.
+   */
+  snapshotUpdatedAt: string | null;
 }
 
 /**

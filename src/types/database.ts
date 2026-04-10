@@ -139,6 +139,7 @@ export type Database = {
         Row: {
           created_at: string
           employee_code: string
+          employee_number: number | null
           id: string
           is_active: boolean
           last_activity_at: string | null
@@ -151,6 +152,7 @@ export type Database = {
         Insert: {
           created_at?: string
           employee_code: string
+          employee_number?: number | null
           id?: string
           is_active?: boolean
           last_activity_at?: string | null
@@ -163,6 +165,7 @@ export type Database = {
         Update: {
           created_at?: string
           employee_code?: string
+          employee_number?: number | null
           id?: string
           is_active?: boolean
           last_activity_at?: string | null
@@ -766,7 +769,196 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }    }
+      }
+      // ── feat-1 snapshot tables ────────────────────────────────────────────
+      employee_last_state: {
+        Row: {
+          employee_id: string
+          organization_id: string
+          last_session_id: string | null
+          is_checked_in: boolean
+          last_latitude: number | null
+          last_longitude: number | null
+          last_location_at: string | null
+          last_check_in_at: string | null
+          last_check_out_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          employee_id: string
+          organization_id: string
+          last_session_id?: string | null
+          is_checked_in?: boolean
+          last_latitude?: number | null
+          last_longitude?: number | null
+          last_location_at?: string | null
+          last_check_in_at?: string | null
+          last_check_out_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          employee_id?: string
+          organization_id?: string
+          last_session_id?: string | null
+          is_checked_in?: boolean
+          last_latitude?: number | null
+          last_longitude?: number | null
+          last_location_at?: string | null
+          last_check_in_at?: string | null
+          last_check_out_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_last_state_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: true
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_last_state_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      active_users: {
+        Row: {
+          employee_id: string
+          organization_id: string
+          session_id: string | null
+          last_seen_at: string
+        }
+        Insert: {
+          employee_id: string
+          organization_id: string
+          session_id?: string | null
+          last_seen_at?: string
+        }
+        Update: {
+          employee_id?: string
+          organization_id?: string
+          session_id?: string | null
+          last_seen_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "active_users_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: true
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "active_users_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      employee_metrics_snapshot: {
+        Row: {
+          employee_id: string
+          organization_id: string
+          total_sessions: number
+          total_hours: number
+          total_distance: number
+          total_expenses: number
+          last_active_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          employee_id: string
+          organization_id: string
+          total_sessions?: number
+          total_hours?: number
+          total_distance?: number
+          total_expenses?: number
+          last_active_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          employee_id?: string
+          organization_id?: string
+          total_sessions?: number
+          total_hours?: number
+          total_distance?: number
+          total_expenses?: number
+          last_active_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_metrics_snapshot_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: true
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_metrics_snapshot_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pending_expenses: {
+        Row: {
+          id: string
+          organization_id: string
+          employee_id: string
+          amount: number
+          category: string | null
+          submitted_at: string
+        }
+        Insert: {
+          id: string
+          organization_id: string
+          employee_id: string
+          amount: number
+          category?: string | null
+          submitted_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          employee_id?: string
+          amount?: number
+          category?: string | null
+          submitted_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pending_expenses_id_fkey"
+            columns: ["id"]
+            isOneToOne: true
+            referencedRelation: "expenses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_expenses_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_expenses_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+    }
     Views: {
       [_ in never]: never
     }

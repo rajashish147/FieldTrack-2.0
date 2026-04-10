@@ -4,6 +4,7 @@ import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest, FastifyBaseLogger } from "fastify";
 import type { AttendanceSession } from "./attendance.schema.js";
 import type { ActivityStatus, SessionDTO } from "../../types/shared.js";
+import { computeActivityStatusFromSession, RECENT_WINDOW_MS } from "../../utils/activity.js";
 
 /**
  * Enriched session returned by list queries — re-exported as SessionDTO.
@@ -13,14 +14,13 @@ export type EnrichedAttendanceSession = SessionDTO;
 
 /**
  * Computes the activity status of a session based on its checkout timestamp.
- * - ACTIVE:   no checkout yet
+ * Delegates to the canonical implementation in utils/activity.ts.
+ * - ACTIVE:   no checkout yet (null = still checked in)
  * - RECENT:   checked out within the last 24 hours
  * - INACTIVE: checked out more than 24 hours ago
  */
 function computeActivityStatus(checkoutAt: string | null): ActivityStatus {
-  if (checkoutAt === null) return "ACTIVE";
-  const ageMs = Date.now() - new Date(checkoutAt).getTime();
-  return ageMs < 86_400_000 ? "RECENT" : "INACTIVE";
+  return computeActivityStatusFromSession(checkoutAt);
 }
 
 /**
@@ -346,7 +346,7 @@ export const attendanceRepository = {
     const status =
       session.checkout_at === null
         ? "ACTIVE"
-        : ageMs !== null && ageMs < 86_400_000
+        : ageMs !== null && ageMs < RECENT_WINDOW_MS
           ? "RECENT"
           : "INACTIVE";
 

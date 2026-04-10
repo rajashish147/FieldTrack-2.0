@@ -3,6 +3,16 @@ import { ZodError } from "zod";
 import { AppError } from "./errors.js";
 
 // ─── Response shape types ─────────────────────────────────────────────────────
+//
+// DTO LAYER ENFORCEMENT:
+// All API responses MUST use these builders — no raw DB rows returned directly.
+// Controllers call ok(data) or paginated(data, page, limit, total).
+// Repository layers transform DB rows into typed DTOs before returning.
+// This ensures:
+//   1. No internal DB column names leak to the API surface
+//   2. Computed fields (activityStatus, etc.) are always present
+//   3. Response shape is consistent across all endpoints
+//
 
 export type SuccessResponse<T> = { success: true; data: T };
 export type ErrorResponse = {

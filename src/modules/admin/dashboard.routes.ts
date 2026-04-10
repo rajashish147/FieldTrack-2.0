@@ -21,6 +21,7 @@ interface DashboardSnapshot {
   today_distance_km: number;
   pending_expense_count: number;
   pending_expense_amount: number;
+  updated_at: string;
 }
 
 // ─── Route registration ───────────────────────────────────────────────────────
@@ -74,7 +75,7 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
                 .select(
                   "active_employee_count, recent_employee_count, inactive_employee_count, " +
                   "active_employees_today, today_session_count, today_distance_km, " +
-                  "pending_expense_count, pending_expense_amount",
+                  "pending_expense_count, pending_expense_amount, updated_at",
                 )
                 .eq("organization_id", orgId)
                 .maybeSingle();
@@ -111,6 +112,7 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
           todayDistanceKm:        snap?.today_distance_km        ?? 0,
           pendingExpenseCount:    snap?.pending_expense_count    ?? 0,
           pendingExpenseAmount:   Number(snap?.pending_expense_amount ?? 0),
+          snapshotUpdatedAt:      snap?.updated_at ?? null,
           sessionTrend,
           leaderboard,
         };

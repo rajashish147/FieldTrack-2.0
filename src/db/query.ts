@@ -27,15 +27,19 @@ import type { Database } from "../types/database.js";
 /** All org-scoped tables that carry an organization_id column. */
 export type OrgScopedTable = Extract<
   keyof Database["public"]["Tables"],
+  | "active_users"
   | "admin_sessions"
   | "attendance_sessions"
   | "employees"
   | "employee_daily_metrics"
+  | "employee_last_state"
   | "employee_latest_sessions"
+  | "employee_metrics_snapshot"
   | "expenses"
   | "gps_locations"
   | "org_daily_metrics"
   | "org_dashboard_snapshot"
+  | "pending_expenses"
   | "session_summaries"
   | "webhook_deliveries"
   | "webhook_events"

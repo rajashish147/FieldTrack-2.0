@@ -128,8 +128,14 @@ export const expensesRepository = {
     }
 
     if (status && status !== "all") {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      baseQuery = (baseQuery as any).eq("status", status);
+      if (status === "processed") {
+        // "processed" = APPROVED + REJECTED (everything that is not PENDING)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        baseQuery = (baseQuery as any).in("status", ["APPROVED", "REJECTED"]);
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        baseQuery = (baseQuery as any).eq("status", status);
+      }
     }
 
     const { data, error, count } = await applyPagination(baseQuery, page, limit);
