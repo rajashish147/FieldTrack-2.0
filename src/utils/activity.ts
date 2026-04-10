@@ -41,7 +41,7 @@
 import type { ActivityStatus } from "../types/shared.js";
 
 /** 24 hours in milliseconds — matches the snapshot worker and reconciliation job. */
-const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Compute ActivityStatus from employee_last_state fields.

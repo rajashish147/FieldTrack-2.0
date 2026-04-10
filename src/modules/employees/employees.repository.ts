@@ -7,7 +7,7 @@ import { BadRequestError } from "../../utils/errors.js";
 import { computeActivityStatus } from "../../utils/activity.js";
 
 const EMPLOYEE_COLS =
-  "id, organization_id, user_id, name, employee_code, employee_number, phone, is_active, created_at, updated_at";
+  "id, organization_id, user_id, name, employee_code, employee_number, phone, is_active, last_activity_at, created_at, updated_at";
 
 /** Generate the next sequential employee code via the DB function. */
 async function nextEmployeeCode(prefix = "EMP"): Promise<string> {
@@ -388,8 +388,10 @@ export const employeesRepository = {
       user_id: string | null;
       name: string;
       employee_code: string;
+      employee_number: number | null;
       phone: string | null;
       is_active: boolean;
+      last_activity_at: string | null;
       created_at: string;
       updated_at: string;
       is_checked_in: boolean;
@@ -414,6 +416,8 @@ export const employeesRepository = {
       is_active: row.is_active,
       created_at: row.created_at,
       updated_at: row.updated_at,
+      employee_number:   row.employee_number ?? null,
+      last_activity_at:  row.last_activity_at ?? null,
       is_checked_in:    false as const,
       last_check_in_at:  row.last_check_in_at,
       last_check_out_at: row.last_check_out_at,

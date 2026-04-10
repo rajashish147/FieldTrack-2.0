@@ -4,7 +4,7 @@ import { applyPagination } from "../../utils/pagination.js";
 import type { FastifyRequest, FastifyBaseLogger } from "fastify";
 import type { AttendanceSession } from "./attendance.schema.js";
 import type { ActivityStatus, SessionDTO } from "../../types/shared.js";
-import { computeActivityStatusFromSession } from "../../utils/activity.js";
+import { computeActivityStatusFromSession, RECENT_WINDOW_MS } from "../../utils/activity.js";
 
 /**
  * Enriched session returned by list queries — re-exported as SessionDTO.
@@ -346,7 +346,7 @@ export const attendanceRepository = {
     const status =
       session.checkout_at === null
         ? "ACTIVE"
-        : ageMs !== null && ageMs < 86_400_000
+        : ageMs !== null && ageMs < RECENT_WINDOW_MS
           ? "RECENT"
           : "INACTIVE";
 
