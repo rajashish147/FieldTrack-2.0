@@ -28,6 +28,35 @@
 #   3. A monitoring note is recorded so the entry is revisited when the fix is stable
 #
 # Every entry MUST include: CVE ID, date added, package, reason, and review trigger.
+
+# ---------------------------------------------------------------------------
+# CVE-2026-28390
+# Added:   2026-04-10
+# Package: libssl3 (debian 12.13) in gcr.io/distroless/nodejs24-debian12:nonroot
+# Fixed:   3.0.19-1~deb12u2 (available in Debian repos; NOT yet in distroless image)
+#
+# Assessment:
+#   The vulnerability is a NULL-pointer dereference in OpenSSL's CMS
+#   (Cryptographic Message Syntax) implementation, triggerable only when the
+#   CMS code path is invoked with a crafted message. Standard HTTPS / TLS
+#   connections do NOT traverse the CMS code path; it is relevant only for
+#   S/MIME, code-signing, and PKCS#7 workflows — none of which this API uses.
+#   Attack surface is low for a web API that terminates TLS without processing
+#   CMS payloads.
+#
+# Dockerfile fix included (belt-and-suspenders):
+#   Stages 2.5a / 2.5b in Dockerfile overlay the patched libssl3 .so files and
+#   patch the distroless dpkg metadata so Trivy should report 3.0.19 after the
+#   next build. This .trivyignore entry acts as a safety net in the unlikely
+#   event that the dpkg metadata path in the distroless image differs from the
+#   expected /var/lib/dpkg layout.
+#
+# Review trigger:
+#   Remove this entry AND the Dockerfile stages 2.5a / 2.5b once
+#   update-base-images.yml rotates the distroless digest to a version that
+#   bundles libssl3 >= 3.0.19-1~deb12u2 natively.
+CVE-2026-28390
+
 # Remove the entry immediately when the fixed version has been deployed.
 
 # ─── NOTE ────────────────────────────────────────────────────────────────────
