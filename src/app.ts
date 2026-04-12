@@ -6,7 +6,6 @@ import fp from "fastify-plugin";
 import { env } from "./config/env.js";
 import { getLoggerConfig } from "./config/logger.js";
 import { registerRoutes } from "./routes/index.js";
-import { shouldStartWorkers } from "./workers/startup.js";
 import { AppError } from "./utils/errors.js";
 import prometheusPlugin from "./plugins/prometheus.js";
 // Phase 15: Dedicated security plugins
@@ -179,22 +178,6 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Register routes
   await registerRoutes(app);
-
-  // Phase 22: Admin queue monitoring endpoint — registered outside registerRoutes
-  // so integration tests (which call registerRoutes directly) are not affected.
-  // Requires Redis and BullMQ; only registered when WORKERS_ENABLED=true.
-  if (shouldStartWorkers()) {
-    const { adminQueuesRoutes } = await import("./modules/admin/queues.routes.js");
-    const { adminRetryIntentsRoutes } = await import("./modules/admin/retry-intents.routes.js");
-    const { systemHealthRoutes } = await import("./modules/admin/system-health.routes.js");
-    await app.register(adminQueuesRoutes);
-    await app.register(adminRetryIntentsRoutes);
-    await app.register(systemHealthRoutes);
-  }
-
-  // Admin audit log — not worker-gated (pure DB, no Redis required).
-  const { auditLogRoutes } = await import("./modules/admin/audit-log.routes.js");
-  await app.register(auditLogRoutes);
 
   // NOTE: Workers and startup recovery are intentionally started in server.ts
   // after app.listen() resolves. This keeps lifecycle explicit and prevents

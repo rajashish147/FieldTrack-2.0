@@ -159,6 +159,9 @@ jobs:
       - name: TypeScript check
         run: npm run typecheck
 
+      - name: Fastify bootstrap sanity check
+        run: npm run ci:bootstrap
+
       - name: Env contract guard (no direct process.env outside env.ts)
         run: |
           if grep -r --include="*.ts" "process\.env" src/ \

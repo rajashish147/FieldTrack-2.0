@@ -104,6 +104,9 @@ jobs:
       - name: TypeScript check
         if: needs.detect-changes.outputs.api == 'true'
         run: npm run typecheck
+      - name: Fastify bootstrap sanity check
+        if: needs.detect-changes.outputs.api == 'true'
+        run: npm run ci:bootstrap
       - name: Env contract guard (no direct process.env outside env.ts)
         if: needs.detect-changes.outputs.api == 'true'
         run: |

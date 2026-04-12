@@ -10,6 +10,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "ci:bootstrap": "tsx scripts/ci-bootstrap-check.ts",
     "lint": "eslint src/modules --ext .ts",
     "start": "node dist/server.js",
     "test": "vitest run",
