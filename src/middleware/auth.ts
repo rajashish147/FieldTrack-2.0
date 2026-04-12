@@ -6,7 +6,7 @@ import { AppError, ForbiddenError, UnauthorizedError } from "../utils/errors.js"
 import { fail } from "../utils/response.js";
 import { verifySupabaseToken } from "../auth/jwtVerifier.js";
 import { apiKeysRepository } from "../modules/api-keys/api-keys.repository.js";
-import { hashApiKey, isApiKeyFormat, safeHashEquals } from "../modules/api-keys/api-keys.security.js";
+import { getKeyPrefix, isApiKeyFormat, verifyApiKey } from "../modules/api-keys/api-keys.security.js";
 import { enforceApiKeyScope } from "./api-key-scope.js";
 
 /**
@@ -37,10 +37,11 @@ export async function authenticate(
                 throw new UnauthorizedError("Invalid API key format", "INVALID_API_KEY");
             }
 
-            const keyHash = hashApiKey(apiKeyHeader);
-            const keyRecord = await apiKeysRepository.findByHash(keyHash);
+            const keyPrefix = getKeyPrefix(apiKeyHeader);
+            const candidates = await apiKeysRepository.findActiveByPrefix(keyPrefix);
+            const keyRecord = candidates.find((record) => verifyApiKey(apiKeyHeader, record.key_hash, record.key_salt));
 
-            if (!keyRecord || !safeHashEquals(keyRecord.key_hash, keyHash)) {
+            if (!keyRecord) {
                 throw new UnauthorizedError("Invalid API key", "INVALID_API_KEY");
             }
 

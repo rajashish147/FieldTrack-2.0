@@ -7,10 +7,10 @@ import { generateRawApiKey, getKeyPrefix, getKeyPreview, hashApiKey } from "./ap
 export const apiKeysService = {
   async createKey(request: FastifyRequest, body: ApiKeyCreateBody): Promise<ApiKeyCreateResult> {
     const raw = generateRawApiKey();
-    const keyHash = hashApiKey(raw);
+    const { hash: keyHash, salt: keySalt } = hashApiKey(raw);
     const keyPrefix = getKeyPrefix(raw);
 
-    const record = await apiKeysRepository.create(request, body, keyHash, keyPrefix);
+    const record = await apiKeysRepository.create(request, body, keyHash, keySalt, keyPrefix);
 
     return {
       key: raw,

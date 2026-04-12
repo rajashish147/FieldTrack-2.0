@@ -53,6 +53,7 @@ export interface ApiKeyAuthRecord {
   id: string;
   organization_id: string;
   key_hash: string;
+  key_salt: string;
   scopes: ApiKeyScope[];
   active: boolean;
 }

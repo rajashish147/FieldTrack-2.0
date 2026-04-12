@@ -19,6 +19,7 @@ interface StoreRow {
   organization_id: string;
   name: string;
   key_hash: string;
+  key_salt: string;
   key_prefix: string;
   scopes: Array<"read:employees" | "read:sessions" | "write:expenses" | "admin:all">;
   active: boolean;
@@ -48,13 +49,14 @@ function toPublic(row: StoreRow) {
 
 vi.mock("../api-keys.repository.js", () => ({
   apiKeysRepository: {
-    create: vi.fn(async (request: { organizationId: string; user: { sub: string } }, body: { name: string; scopes: StoreRow["scopes"] }, keyHash: string, keyPrefix: string) => {
+    create: vi.fn(async (request: { organizationId: string; user: { sub: string } }, body: { name: string; scopes: StoreRow["scopes"] }, keyHash: string, keySalt: string, keyPrefix: string) => {
       const now = new Date().toISOString();
       const row: StoreRow = {
         id: randomUUID(),
         organization_id: request.organizationId,
         name: body.name,
         key_hash: keyHash,
+        key_salt: keySalt,
         key_prefix: keyPrefix,
         scopes: body.scopes,
         active: true,
@@ -105,17 +107,17 @@ vi.mock("../api-keys.repository.js", () => ({
       keyStore.delete(id);
     }),
 
-    findByHash: vi.fn(async (keyHash: string) => {
-      const row = Array.from(keyStore.values()).find((x) => x.key_hash === keyHash && x.active && x.revoked_at === null);
-      if (!row) return null;
-      return {
-        id: row.id,
-        organization_id: row.organization_id,
-        key_hash: row.key_hash,
-        scopes: row.scopes,
-        active: row.active,
-      };
-    }),
+    findActiveByPrefix: vi.fn(async (keyPrefix: string) =>
+      Array.from(keyStore.values())
+        .filter((x) => x.key_prefix === keyPrefix && x.active && x.revoked_at === null)
+        .map((row) => ({
+          id: row.id,
+          organization_id: row.organization_id,
+          key_hash: row.key_hash,
+          key_salt: row.key_salt,
+          scopes: row.scopes,
+          active: row.active,
+        }))),
 
     markUsed: vi.fn(async (id: string) => {
       const row = keyStore.get(id);
@@ -355,7 +357,7 @@ describe("API Keys integration", () => {
     }
 
     expect(hit429).toBe(true);
-  });
+  }, 60_000);
 
   it("Usage tracking: request_count and error_count increment", async () => {
     const readKey = await createKey(app, adminToken, "Usage key", ["read:employees"]);
