@@ -9,10 +9,10 @@ import { authenticate } from "../../../middleware/auth.js";
 import rateLimitPlugin from "../../../plugins/security/ratelimit.plugin.js";
 import { ok } from "../../../utils/response.js";
 import { AppError } from "../../../utils/errors.js";
-import { env } from "../../../config/env.js";
 
 const TEST_ORG_ID = "11111111-1111-4111-8111-111111111111";
 const TEST_ADMIN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const TEST_JWT_SECRET = "test-secret";
 
 interface StoreRow {
   id: string;
@@ -139,7 +139,7 @@ async function buildApiKeyTestApp(): Promise<FastifyInstance> {
   registerZod(app);
 
   await app.register(fastifyJwt, {
-    secret: env.SUPABASE_JWT_SECRET,
+    secret: TEST_JWT_SECRET,
   });
 
   await app.register(rateLimitPlugin);
