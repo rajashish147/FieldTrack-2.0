@@ -4,6 +4,8 @@ import { ForbiddenError } from "../utils/errors.js";
 function routeScope(method: string, routePath: string): ApiKeyScope | "admin:all" | null {
   // null = any authenticated API key may call this endpoint (no additional scope needed)
   if (routePath === "/auth/me") return null;
+  if (method === "GET" && routePath === "/leaderboard") return null;
+  if (method === "GET" && routePath === "/profile/me") return null;
 
   if (method === "GET" && routePath.startsWith("/admin/employees")) return "read:employees";
   if (method === "GET" && (routePath.startsWith("/admin/sessions") || routePath === "/attendance/my-sessions")) {

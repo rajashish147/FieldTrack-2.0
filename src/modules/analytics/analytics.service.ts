@@ -35,6 +35,19 @@ function validateDateRange(
 }
 
 /**
+ * Returns a bounded ISO datetime string: the provided `from` if given, or
+ * midnight UTC exactly `daysBack` days ago.  Prevents unbounded table scans
+ * when callers omit the date range on analytics endpoints.
+ */
+function effectiveFrom(from: string | undefined, daysBack = 30): string {
+  if (from !== undefined) return from;
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - daysBack);
+  d.setUTCHours(0, 0, 0, 0);
+  return d.toISOString();
+}
+
+/**
  * Aggregate expense rows into counts and amounts by status.
  * Pure function — no DB access.
  */
@@ -88,13 +101,15 @@ export const analyticsService = {
     to: string | undefined,
   ): Promise<OrgSummaryData> {
     validateDateRange(from, to);
+    // Apply default to prevent unbounded scans on large orgs
+    const safeFrom = effectiveFrom(from);
 
-    const cacheKey = `org:${request.organizationId}:analytics:summary:${from ?? "all"}:${to ?? "all"}`;
+    const cacheKey = `org:${request.organizationId}:analytics:summary:${safeFrom}:${to ?? "all"}`;
     return getCached(cacheKey, ANALYTICS_CACHE_TTL, async () => {
       // Step 1: aggregate session stats from pre-computed org_daily_metrics.
       // Date filter uses YYYY-MM-DD format; from/to are full ISO datetimes so
       // we strip to the date portion for the gte/lte comparison.
-      const dailyFrom = from ? from.substring(0, 10) : undefined;
+      const dailyFrom = safeFrom.substring(0, 10);
       const dailyTo = to ? to.substring(0, 10) : undefined;
       const dailyMetrics = await analyticsRepository.getOrgDailyMetrics(
         request,
@@ -113,7 +128,7 @@ export const analyticsService = {
 
       // Step 2: expense aggregation and active employee count — independent, run in parallel
       const [expenseRows, activeEmployeesCount] = await Promise.all([
-        analyticsRepository.getExpensesInRange(request, from, to),
+        analyticsRepository.getExpensesInRange(request, safeFrom, to),
         analyticsRepository.getActiveEmployeesCount(request),
       ]);
 
@@ -257,11 +272,13 @@ export const analyticsService = {
     limit: number,
   ): Promise<TopPerformerEntry[]> {
     validateDateRange(from, to);
+    // Apply default to prevent unbounded scans on large orgs
+    const safeFrom = effectiveFrom(from);
 
     // Single JOIN query — sessions + employee names in one round-trip.
     const sessions = await analyticsRepository.getSessionsWithEmployeeNames(
       request,
-      from,
+      safeFrom,
       to,
     );
 
@@ -342,9 +359,11 @@ export const analyticsService = {
     to: string | undefined,
   ): Promise<SessionTrendEntry[]> {
     validateDateRange(from, to);
-    const cacheKey = `org:${request.organizationId}:analytics:trend:${from ?? "all"}:${to ?? "all"}`;
+    // Apply default to prevent unbounded scans; trend charts benefit from a 90-day window
+    const safeFrom = effectiveFrom(from, 90);
+    const cacheKey = `org:${request.organizationId}:analytics:trend:${safeFrom}:${to ?? "all"}`;
     return getCached(cacheKey, ANALYTICS_CACHE_TTL, () =>
-      analyticsRepository.getOrgDailyMetrics(request, from, to),
+      analyticsRepository.getOrgDailyMetrics(request, safeFrom, to),
     );
   },
 
@@ -366,14 +385,16 @@ export const analyticsService = {
     limit: number,
   ): Promise<LeaderboardEntry[]> {
     validateDateRange(from, to);
+    // Apply default to prevent unbounded scans on large orgs
+    const safeFrom = effectiveFrom(from);
 
-    const cacheKey = `org:${request.organizationId}:analytics:leaderboard:${metric}:${limit}:${from ?? "all"}:${to ?? "all"}`;
+    const cacheKey = `org:${request.organizationId}:analytics:leaderboard:${metric}:${limit}:${safeFrom}:${to ?? "all"}`;
     return getCached(cacheKey, ANALYTICS_CACHE_TTL, async () => {
       // All metrics — distance / duration / sessions / expenses — read from
       // employee_daily_metrics so no GPS or expenses table scans are needed.
       const aggregated = await analyticsRepository.getEmployeeMetricsAggregated(
         request,
-        from,
+        safeFrom,
         to,
       );
 
