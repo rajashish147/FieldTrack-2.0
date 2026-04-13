@@ -8,6 +8,7 @@ import type {
   LeaderboardQuery,
 } from "./analytics.schema.js";
 import { ok, handleError } from "../../utils/response.js";
+import { BadRequestError } from "../../utils/errors.js";
 
 /**
  * Analytics controller — delegates to service and returns consistent
@@ -51,7 +52,12 @@ export const analyticsController = {
   ): Promise<void> {
     try {
       const query = request.query as UserSummaryQuery;
-      const userId = query.userId ?? request.user.sub;
+      // When authenticating via API key, request.user.sub is "api_key:<id>" which
+      // is not a valid users.id UUID. Require an explicit userId in that case.
+      const userId = query.userId ?? (request.authType === "api_key" ? null : request.user.sub);
+      if (!userId) {
+        throw new BadRequestError("userId query parameter is required when using API key authentication");
+      }
       const data = await analyticsService.getUserSummary(
         request,
         userId,

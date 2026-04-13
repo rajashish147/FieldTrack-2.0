@@ -93,14 +93,16 @@ export const monitoringRepository = {
     page: number,
     limit: number,
   ): Promise<{ data: AdminSession[]; total: number }> {
-    const { data, error, count } = await applyPagination(
-      orgTable(request, "admin_sessions")
-        .select(MONITORING_COLS, { count: "exact" })
-        .eq("admin_id", request.user.sub)
-        .order("started_at", { ascending: false }),
-      page,
-      limit,
-    );
+    // When auth is via API key, request.user.sub is "api_key:<id>" — not a real
+    // users.id UUID. Filtering by admin_id would cause a DB type error. Instead,
+    // return all org sessions (API key callers have org-level access, not user-level).
+    let baseQuery = orgTable(request, "admin_sessions")
+      .select(MONITORING_COLS, { count: "exact" })
+      .order("started_at", { ascending: false });
+    if (request.authType !== "api_key") {
+      baseQuery = baseQuery.eq("admin_id", request.user.sub);
+    }
+    const { data, error, count } = await applyPagination(baseQuery, page, limit);
 
     if (error) {
       throw new Error(`Failed to fetch monitoring history: ${error.message}`);

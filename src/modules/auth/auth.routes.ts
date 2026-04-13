@@ -5,7 +5,8 @@ import { authenticate } from "../../middleware/auth.js";
 const authMeResponseSchema = z.object({
   success: z.literal(true),
   data: z.object({
-    id: z.string().uuid(),
+    // sub can be a UUID (JWT) or "api_key:<uuid>" (API key auth) — accept both
+    id: z.string(),
     email: z.string().email().optional(),
     role: z.enum(["ADMIN", "EMPLOYEE"]),
     orgId: z.string().uuid(),
