@@ -15,14 +15,14 @@ const sessionResponseSchema = z.object({
     id: z.string().uuid(),
     employee_id: z.string().uuid(),
     organization_id: z.string().uuid(),
-    checkin_at: z.string().datetime({ offset: true }),
-    checkout_at: z.string().datetime({ offset: true }).nullable(),
+    checkin_at: z.string(),
+    checkout_at: z.string().nullable(),
     total_distance_km: z.number().nullable(),
-    duration_seconds: z.number().nullable(),
+    total_duration_seconds: z.number().nullable(),
     distance_recalculation_status: z.string().nullable(),
-    created_at: z.string().datetime({ offset: true }),
-    updated_at: z.string().datetime({ offset: true }),
-  }),
+    created_at: z.string(),
+    updated_at: z.string(),
+  }).passthrough(),
 });
 
 /**
