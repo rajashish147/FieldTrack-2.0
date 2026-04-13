@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { supabaseServiceClient as supabase } from "../../config/supabase.js";
@@ -48,6 +49,26 @@ export async function adminMapRoutes(app: FastifyInstance): Promise<void> {
     {
       schema: {
         tags: ["admin"],
+        summary: "Live map markers for active/recent employees",
+        description:
+          "Returns one GPS marker per ACTIVE or RECENT employee who has at least one recorded location. " +
+          "Uses a single DISTINCT ON join via the `get_active_map_markers` Postgres function. " +
+          "Capped at 1000 markers.",
+        response: {
+          200: z.object({
+            success: z.literal(true),
+            data: z.array(z.object({
+              employeeId:   z.string().uuid(),
+              employeeName: z.string(),
+              employeeCode: z.string().nullable(),
+              status:       z.enum(["ACTIVE", "RECENT"]),
+              sessionId:    z.string().uuid().nullable(),
+              latitude:     z.number(),
+              longitude:    z.number(),
+              recordedAt:   z.string().datetime({ offset: true }),
+            })),
+          }).describe("Map markers for active/recent employees"),
+        },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },

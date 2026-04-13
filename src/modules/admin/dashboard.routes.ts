@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { supabaseServiceClient as supabase } from "../../config/supabase.js";
@@ -50,6 +51,39 @@ export async function adminDashboardRoutes(app: FastifyInstance): Promise<void> 
     {
       schema: {
         tags: ["admin"],
+        summary: "Admin dashboard overview",
+        description:
+          "Returns org-wide KPIs, 7-day session trend, and 30-day distance leaderboard in one call. " +
+          "Served from Redis cache (60 s TTL for snapshot, 5 min for trend/leaderboard).",
+        response: {
+          200: z.object({
+            success: z.literal(true),
+            data: z.object({
+              activeEmployeeCount:   z.number().int().describe("Employees with ACTIVE status"),
+              recentEmployeeCount:   z.number().int().describe("Employees with RECENT status"),
+              inactiveEmployeeCount: z.number().int().describe("Employees with INACTIVE status"),
+              activeEmployeesToday:  z.number().int().describe("Unique employees who checked in today"),
+              todaySessionCount:     z.number().int().describe("Sessions started today"),
+              todayDistanceKm:       z.number().describe("Total km tracked today"),
+              pendingExpenseCount:   z.number().int().describe("Expenses awaiting review"),
+              pendingExpenseAmount:  z.number().describe("Total pending expense amount"),
+              snapshotUpdatedAt:     z.string().nullable().describe("When the snapshot was last refreshed"),
+              sessionTrend: z.array(z.object({
+                date: z.string(),
+                session_count: z.number(),
+                unique_employees: z.number(),
+                total_distance_km: z.number(),
+              })).describe("Daily session counts for the last 7 days"),
+              leaderboard: z.array(z.object({
+                employee_id: z.string(),
+                employee_name: z.string(),
+                employee_code: z.string().nullable(),
+                total_distance_km: z.number(),
+                session_count: z.number(),
+              })).describe("Top 5 employees by distance in the last 30 days"),
+            }),
+          }).describe("Admin dashboard KPIs"),
+        },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },

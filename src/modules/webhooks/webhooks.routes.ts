@@ -64,8 +64,9 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
     "/webhooks",
     {
       schema: {
+        hide: true,
         tags: ["admin", "webhooks"],
-        summary: "List registered webhooks (secrets omitted)",
+        summary: "List registered webhooks (secrets omitted) [legacy alias]",
         response: { 200: webhookListResponse },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
@@ -91,8 +92,9 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
     "/webhooks",
     {
       schema: {
+        hide: true,
         tags: ["admin", "webhooks"],
-        summary: "Register a new webhook endpoint",
+        summary: "Register a new webhook endpoint [legacy alias]",
         body: createWebhookBodySchema,
         response: { 201: webhookResponse },
       },
@@ -120,8 +122,9 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
     "/webhooks/:id",
     {
       schema: {
+        hide: true,
         tags: ["admin", "webhooks"],
-        summary: "Update webhook url, events, active state, or secret",
+        summary: "Update webhook url, events, active state, or secret [legacy alias]",
         params: z.object({ id: z.string().uuid() }),
         body: updateWebhookBodySchema,
         response: { 200: webhookResponse },
@@ -149,8 +152,9 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
     "/webhooks/:id",
     {
       schema: {
+        hide: true,
         tags: ["admin", "webhooks"],
-        summary: "Delete a webhook and all its delivery history",
+        summary: "Delete a webhook and all its delivery history [legacy alias]",
         params: z.object({ id: z.string().uuid() }),
         response: { 204: z.null().describe("No content") },
       },
@@ -191,8 +195,9 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
     "/webhooks/logs",
     {
       schema: {
+        hide: true,
         tags: ["admin", "webhooks"],
-        summary: "List webhook delivery logs for this organization",
+        summary: "List webhook delivery logs for this organization [legacy alias]",
         querystring: deliveryListQuerySchema,
       },
       preValidation: [authenticate, requireRole("ADMIN")],
@@ -232,8 +237,9 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
     "/webhooks/logs/:id/retry",
     {
       schema: {
+        hide: true,
         tags: ["admin", "webhooks"],
-        summary: "Retry a webhook delivery log entry",
+        summary: "Retry a webhook delivery log entry [legacy alias]",
         params: z.object({ id: z.string().uuid() }),
         response: { 200: deliveryResponse },
       },
@@ -260,8 +266,9 @@ export async function webhooksRoutes(app: FastifyInstance): Promise<void> {
     "/webhooks/:id/test",
     {
       schema: {
+        hide: true,
         tags: ["admin", "webhooks"],
-        summary: "Send a synthetic test webhook to this endpoint",
+        summary: "Send a synthetic test webhook to this endpoint [legacy alias]",
         params: z.object({ id: z.string().uuid() }),
         response: { 202: webhookTestResponseSchema },
       },

@@ -9,8 +9,12 @@ function routeScope(method: string, routePath: string): ApiKeyScope | "admin:all
   if (method === "GET" && (routePath.startsWith("/admin/sessions") || routePath === "/attendance/my-sessions")) {
     return "read:sessions";
   }
+  // NOTE: POST /expenses is intentionally excluded here.
+  // Creating an expense requires employee context (employee_id from JWT) which
+  // API keys never carry. Including it in write:expenses would give a misleading
+  // "API key missing required scope" error instead of the real reason. Callers
+  // that need to submit expenses on behalf of employees must use employee JWTs.
   if (
-    (method === "POST" && routePath === "/expenses") ||
     (method === "GET" && routePath === "/expenses/my") ||
     (method === "PATCH" && routePath.startsWith("/admin/expenses/"))
   ) {

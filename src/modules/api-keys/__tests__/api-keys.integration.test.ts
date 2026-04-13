@@ -327,9 +327,13 @@ describe("API Keys integration", () => {
     const readCantWrite = await app.inject({ method: "POST", url: "/expenses", headers: { "x-api-key": readKey.key } });
     expect(readCantWrite.statusCode).toBe(403);
 
+    // write:expenses scope deliberately excludes POST /expenses: creating an expense requires
+    // employee context (employee_id from JWT) which API keys never carry. Calling POST /expenses
+    // with a write:expenses key returns 403 "API key missing required scope: admin:all".
+    // The write:expenses scope only covers: GET /expenses/my + PATCH /admin/expenses/:id.
     const writeKey = await createKey(app, adminToken, "Write key", ["write:expenses"]);
-    const writeOk = await app.inject({ method: "POST", url: "/expenses", headers: { "x-api-key": writeKey.key } });
-    expect(writeOk.statusCode).toBe(200);
+    const writeCantExpense = await app.inject({ method: "POST", url: "/expenses", headers: { "x-api-key": writeKey.key } });
+    expect(writeCantExpense.statusCode).toBe(403); // scope requires admin:all for POST /expenses
     const writeCantAdmin = await app.inject({ method: "GET", url: "/admin/system-health/probe", headers: { "x-api-key": writeKey.key } });
     expect(writeCantAdmin.statusCode).toBe(403);
 

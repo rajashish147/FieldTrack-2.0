@@ -30,8 +30,10 @@ export async function apiKeysRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin", "api-keys"],
         summary: "Create API key (raw key returned only once)",
+        description: "Creates a new scoped API key for this organization. The raw key is returned only once and cannot be retrieved again. JWT authentication required — API keys cannot create other API keys.",
         body: apiKeyCreateBodySchema,
         response: { 201: apiKeyCreateResponseSchema },
+        security: [{ BearerAuth: [] }],
       },
       preValidation: [authenticate, requireJwtAuth, requireRole("ADMIN")],
     },
@@ -44,7 +46,9 @@ export async function apiKeysRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin", "api-keys"],
         summary: "List API keys for organization",
+        description: "Returns all API keys for this organization (secrets never included). JWT authentication required.",
         response: { 200: apiKeyListResponseSchema },
+        security: [{ BearerAuth: [] }],
       },
       preValidation: [authenticate, requireJwtAuth, requireRole("ADMIN")],
     },
@@ -57,9 +61,11 @@ export async function apiKeysRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin", "api-keys"],
         summary: "Update API key metadata, scopes or active state",
+        description: "Updates an existing API key's name, scopes, or active status. JWT authentication required.",
         params: z.object({ id: z.string().uuid() }),
         body: apiKeyUpdateBodySchema,
         response: { 200: apiKeySingleResponseSchema },
+        security: [{ BearerAuth: [] }],
       },
       preValidation: [authenticate, requireJwtAuth, requireRole("ADMIN")],
     },
@@ -72,8 +78,10 @@ export async function apiKeysRoutes(app: FastifyInstance): Promise<void> {
       schema: {
         tags: ["admin", "api-keys"],
         summary: "Delete API key",
+        description: "Permanently deletes an API key. JWT authentication required.",
         params: z.object({ id: z.string().uuid() }),
         response: { 204: z.null().describe("No content") },
+        security: [{ BearerAuth: [] }],
       },
       preValidation: [authenticate, requireJwtAuth, requireRole("ADMIN")],
     },

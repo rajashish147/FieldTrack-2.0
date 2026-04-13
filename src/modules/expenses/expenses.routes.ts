@@ -166,7 +166,13 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
     {
       schema: {
         tags: ["admin"],
-        description: "Export all org expenses as CSV (ADMIN only).",
+        summary: "Export org expenses as CSV",
+        description:
+          "Returns all org expenses as a UTF-8 CSV file with Content-Disposition: attachment. " +
+          "Optionally filter by a single employee UUID. ADMIN only.",
+        querystring: z.object({
+          employee_id: z.string().uuid().optional().describe("Filter to a specific employee's expenses"),
+        }),
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },

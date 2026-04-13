@@ -1,9 +1,29 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireRole } from "../../middleware/role-guard.js";
 import { attendanceController } from "./attendance.controller.js";
 import { sessionSummaryController } from "../session_summary/session_summary.controller.js";
 import { paginationSchema } from "./attendance.schema.js";
+
+// ─── Shared response schema ────────────────────────────────────────────────────
+
+/** Shape of an attendance_sessions row as returned by the API. */
+const sessionResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    id: z.string().uuid(),
+    employee_id: z.string().uuid(),
+    organization_id: z.string().uuid(),
+    checkin_at: z.string(),
+    checkout_at: z.string().nullable(),
+    total_distance_km: z.number().nullable(),
+    total_duration_seconds: z.number().nullable(),
+    distance_recalculation_status: z.string().nullable(),
+    created_at: z.string(),
+    updated_at: z.string(),
+  }).passthrough(),
+});
 
 /**
  * Attendance routes — all endpoints require authentication.
@@ -14,7 +34,15 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/attendance/check-in",
     {
-      schema: { tags: ["attendance"] },
+      schema: {
+        tags: ["attendance"],
+        summary: "Check in (start a new attendance session)",
+        description:
+          "Creates a new open attendance session for the authenticated employee. " +
+          "No request body required — identity is resolved from the JWT. " +
+          "Returns 409 if the employee already has an open session.",
+        response: { 201: sessionResponseSchema.describe("Created attendance session") },
+      },
       preValidation: [authenticate, requireRole("EMPLOYEE")],
     },
     attendanceController.checkIn,
@@ -24,7 +52,15 @@ export async function attendanceRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/attendance/check-out",
     {
-      schema: { tags: ["attendance"] },
+      schema: {
+        tags: ["attendance"],
+        summary: "Check out (close the current attendance session)",
+        description:
+          "Closes the employee's current open session and enqueues distance/analytics jobs. " +
+          "No request body required — identity is resolved from the JWT. " +
+          "Returns 409 if there is no open session to close.",
+        response: { 200: sessionResponseSchema.describe("Closed attendance session") },
+      },
       preValidation: [authenticate, requireRole("EMPLOYEE")],
     },
     attendanceController.checkOut,

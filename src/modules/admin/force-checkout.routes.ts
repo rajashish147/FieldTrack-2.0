@@ -29,7 +29,25 @@ export async function adminForceCheckoutRoutes(app: FastifyInstance): Promise<vo
     {
       schema: {
         tags: ["admin"],
-        description: "Force-close the active session for an employee (ADMIN only).",
+        summary: "Force-close the active session for an employee",
+        description: "Forcibly closes the active session for a given employee. Mirrors check-out logic but called by ADMIN. Fires distance + analytics jobs and emits SSE event.",
+        body: z.object({
+          employee_id: z.string().uuid().describe("UUID of the employee whose active session to close"),
+        }),
+        response: {
+          200: z.object({
+            success: z.literal(true),
+            data: z.object({
+              id: z.string().uuid(),
+              employee_id: z.string().uuid(),
+              organization_id: z.string().uuid(),
+              checkin_at: z.string(),
+              checkout_at: z.string().nullable(),
+              total_distance_km: z.number().nullable(),
+              duration_seconds: z.number().nullable(),
+            }).describe("The closed session record"),
+          }),
+        },
       },
       preValidation: [authenticate, requireRole("ADMIN")],
     },

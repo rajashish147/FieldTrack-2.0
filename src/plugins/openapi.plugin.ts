@@ -108,14 +108,17 @@ async function openApiPlugin(app: FastifyInstance): Promise<void> {
       ],
       tags: [
         { name: "health", description: "Health check and system status endpoints" },
+        { name: "auth", description: "Authentication and identity resolution" },
         { name: "attendance", description: "Attendance tracking and session management" },
         { name: "locations", description: "Location tracking and route calculation" },
         { name: "expenses", description: "Expense reporting and management" },
         { name: "analytics", description: "Business analytics and reporting" },
         { name: "admin", description: "Administrative operations (ADMIN role required)" },
+        { name: "webhooks", description: "Webhook endpoint management and delivery logs" },
         { name: "api-keys", description: "API key management and scoped external access" },
         { name: "dashboard", description: "Employee dashboard and personal statistics" },
         { name: "profile", description: "Employee profile and activity status" },
+        { name: "deprecated", description: "Deprecated endpoints — use documented alternatives" },
       ],
       components: {
         securitySchemes: {
